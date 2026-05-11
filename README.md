@@ -1,0 +1,84 @@
+# Daily Digest & Weekly Report — Take-Home Assignment
+
+## What this builds
+A system that generates personalized daily digests and weekly reports
+for D2C e-commerce brands, surfacing only the metric movements that
+genuinely matter — grounded in data, never hallucinated.
+
+## How to run
+
+### Setup
+    cd ecom-digest
+    python -m venv venv
+    venv\Scripts\activate
+    pip install -r requirements.txt
+
+### Add your API key
+Create a `.env` file in the project root:
+    ANTHROPIC_API_KEY=sk-ant-...
+
+### Place the dataset
+Copy `metrics_159d.csv` into the `data/` folder.
+
+### Run notebooks in order
+1. `notebooks/01_eda.ipynb` — data exploration and baseline stats
+2. `notebooks/02_ranker_dev.ipynb` — ranking engine validation
+3. `notebooks/03_generate_reports.ipynb` — generate all 5 sample reports
+4. `notebooks/04_design_doc.ipynb` — generate design doc and tradeoffs
+
+## Project structure
+
+    ecom-digest/
+    ├── data/
+    │   └── metrics_159d.csv          # dataset (not committed)
+    ├── src/
+    │   ├── ranker.py                 # deterministic scoring engine
+    │   └── report_generator.py      # LLM report generator
+    ├── notebooks/
+    │   ├── 01_eda.ipynb
+    │   ├── 02_ranker_dev.ipynb
+    │   ├── 03_generate_reports.ipynb
+    │   └── 04_design_doc.ipynb
+    ├── outputs/
+    │   ├── eda/                      # saved EDA charts + summary
+    │   └── reports/                  # generated markdown reports
+    ├── design_doc.md                 # Deliverable 1
+    ├── tradeoffs.md                  # Deliverable 4
+    └── requirements.txt
+
+## Key design decisions
+
+**Why deterministic ranking before the LLM?**
+The LLM explains findings — it never selects them. Selection is
+auditable, testable, and consistent. Generation is not.
+
+**Why z-score with DoW adjustment?**
+Raw z-score fires false alerts every Sunday (always lower than
+28d mean). DoW adjustment compares Monday to recent Mondays only,
+eliminating a whole class of noise.
+
+**Why cap ROAS/ratio metric deltas at 500%?**
+A campaign spending INR 10 one week and INR 0 the next shows
+infinite WoW change. This is a math artifact, not a business
+signal. Cap at 500% and flag [capped] in the fact sentence so
+the LLM handles it correctly.
+
+**Why pre-compute fact sentences before the LLM call?**
+Hallucination prevention. Every number the LLM sees is already
+computed and formatted. The LLM cannot invent values because it
+is never asked to compute them.
+
+## Key data insights from EDA
+- Ad spend and revenue weakly correlated (Meta r=0.12, Google r=0.15)
+  — causal attribution not supportable from this data
+- 91% of Shopify orders unattributed at channel level
+  — channel slices are directional signals only
+- Strong Thursday peak, Sunday trough — DoW adjustment is essential
+- 4 anomaly days in 160 days — Oct 8, Dec 10, Jan 1, Feb 7
+
+## How I used AI tools
+- **Claude (claude-sonnet-4-6):** LLM layer in report_generator.py,
+  design doc drafting, tradeoffs analysis
+- **All ranking logic (ranker.py):** deterministic Python, no LLM
+- **All report numbers:** pre-computed facts — LLM cannot invent values
+- **EDA insights:** discovered through manual notebook exploration
