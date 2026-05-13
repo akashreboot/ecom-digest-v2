@@ -8,8 +8,11 @@ genuinely matter — grounded in data, never hallucinated.
 ## How to run
 
 ### Setup
-    cd ecom-digest
+    cd ecom-digest-v2
     python -m venv venv
+    # macOS / Linux:
+    source venv/bin/activate
+    # Windows:
     venv\Scripts\activate
     pip install -r requirements.txt
 
@@ -55,7 +58,9 @@ auditable, testable, and consistent. Generation is not.
 **Why z-score with DoW adjustment?**
 Raw z-score fires false alerts every Sunday (always lower than
 28d mean). DoW adjustment compares Monday to recent Mondays only,
-eliminating a whole class of noise.
+eliminating a whole class of noise. The baseline mean AND std are
+both computed from the same-weekday window so the z numerator and
+denominator come from the same distribution.
 
 **Why cap ROAS/ratio metric deltas at 500%?**
 A campaign spending INR 10 one week and INR 0 the next shows
@@ -65,8 +70,22 @@ the LLM handles it correctly.
 
 **Why pre-compute fact sentences before the LLM call?**
 Hallucination prevention. Every number the LLM sees is already
-computed and formatted. The LLM cannot invent values because it
-is never asked to compute them.
+computed and formatted. After generation, `validate_numeric_grounding()`
+re-extracts every numeric token from the LLM output and verifies it
+exists in the input facts; ungrounded numbers trigger a deterministic
+template fallback.
+
+**Why prompt caching?**
+The system prompt is identical across every report. `cache_control:
+ephemeral` on the system block means it's billed at full rate once per
+~5 minute window and at ~10% after that, which is the main cost lever
+for the 10k-customer scenario.
+
+**Why a profile multiplier instead of a learned model?**
+No engagement data exists yet. A +30% boost on `profile.primary_metrics`
+is the cold-start prior — auditable, easy to override, and ready to be
+replaced by learned per-customer weights once 4–6 weeks of click data
+exists.
 
 ## Key data insights from EDA
 - Ad spend and revenue weakly correlated (Meta r=0.12, Google r=0.15)

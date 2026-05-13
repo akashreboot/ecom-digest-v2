@@ -40,24 +40,39 @@ Anomaly threshold for surfacing to the digest is |z| > 2.0. Signals above |z| > 
 
 ### Business Weighting
 
+Weights live in `ranker.py:BUSINESS_WEIGHTS` and are applied as a multiplier on the statistical score. The full table:
+
 | Metric | Weight | Rationale |
 |--------|--------|-----------|
-| Revenue | 1.0 | Direct P&L impact |
-| Orders | 0.9 | Volume proxy; leads revenue by hours |
-| ROAS | 0.8 | Efficiency signal; informs budget decisions |
-| AOV | 0.75 | Cohort quality indicator |
-| Spend | 0.7 | Input variable; less informative than outputs |
-| CPM | 0.5 | Auction signal; contextual not decisive |
-| CTR | 0.4 | Creative signal; rarely actionable same-day |
-| Impressions | 0.2 | Scale metric; high noise, low decision value |
+| revenue | 1.0 | Direct P&L impact |
+| orders | 0.9 | Volume proxy; leads revenue by hours |
+| roas | 0.8 | Efficiency signal; informs budget decisions |
+| aov | 0.75 | Cohort quality indicator |
+| spend | 0.7 | Input variable; less informative than outputs |
+| new_customer_share | 0.65 | Acquisition health |
+| attributed_revenue | 0.6 | Platform-reported, weakly correlated with Shopify revenue |
+| attributed_orders | 0.55 | Platform-reported volume |
+| new_orders | 0.5 | Acquisition volume |
+| returning_orders | 0.5 | Retention volume |
+| cpc | 0.4 | Auction cost signal |
+| cpm | 0.35 | Auction signal; contextual not decisive |
+| ctr | 0.3 | Creative signal; rarely actionable same-day |
+| impressions | 0.2 | Scale metric; high noise, low decision value |
+| clicks | 0.2 | Scale metric; high noise, low decision value |
 
 Revenue is weighted 1.0 because it is the only metric that directly maps to business outcomes. Impressions are weighted 0.2 because a 50% swing in impressions is often explained by auction dynamics, day-of-week, or budget pacing — and almost never requires a human decision on its own. The weight structure means that a large ROAS anomaly on a low-spend campaign will be appropriately discounted relative to a revenue anomaly at the brand's average daily scale.
 
 ### The Double-Counting Problem
 
-During EDA, a critical data integrity issue was identified: the Shopify dataset contains both a `shopify_total` row aggregating all revenue and individual channel-attributed rows (e.g., `direct`, `email`, `search`). Approximately 91% of Shopify orders have no channel attribution — they appear in an `unattributed` slice that is itself a subset of `shopify_total`. If all three rows (total, unattributed, and attributed channels) are scored independently, the same revenue gets counted two or three times in the ranking, and the Shopify unattributed slice — being the largest single row — dominates every digest regardless of whether anything meaningful happened there.
+During EDA, a critical data integrity issue was identified. The Shopify export emits three overlapping slices per metric per day:
 
-The fix is a deduplication rule applied before scoring: `shopify_total` is excluded from the ranker entirely (it is a rollup, not a signal), and `shopify_unattributed` is also excluded from daily ranking but is retained as a reference denominator for computing attributed fraction. Only channel-level slices with positive attribution are scored. This means the ranker surfaces signals from channels where spend and revenue can be connected — Meta, Google, direct, email — rather than inflating scores on an unattributed bucket that carries no actionable information.
+1. **Daily total** (`channel = ""`, `customer_type = ""`) — one row per day, the brand's overall number.
+2. **By referrer channel** — `direct`, `paid`, `organic`, `email`, `marketplace`, `other`, `unattributed`. ~91% of orders fall into `unattributed`, so its value is numerically identical to the daily total on most days.
+3. **By customer type** — `new` and `returning`. These also sum to the daily total.
+
+Scoring everything together would double- or triple-count the same revenue and let the largest single row (`unattributed`) dominate every digest. Worse, the daily total and `unattributed` would surface as two separate findings with the same number.
+
+The fix in `ranker.py:DEDUP_PAIRS` is to **keep the daily total** as the headline revenue/orders/AOV signal and **drop the `unattributed` channel slice** before scoring, since on most days they carry the same value. The remaining attributed channel slices (`direct`, `email`, `paid`, etc.) are still scored — they're directionally useful even though attribution is thin. Customer-type slices (`new`, `returning`) are scored separately and are not dedup'd against the total because they answer a different question (cohort mix).
 
 ### The Ratio Metric Artifact Problem
 
@@ -83,9 +98,17 @@ By 60+ days, the system has enough history to do three things it cannot do earli
 
 ### The Two Profiles Built
 
-**PROFILE_GROWTH** is configured for brands where the primary question is "are we acquiring customers efficiently?" ROAS weight is increased to 0.9 (from 0.8), new customer order metrics are boosted by 1.1x, and the Weekly Report leads with channel efficiency rankings. AOV is tracked but not lead-ranked. The Dec 10 signal — new customer revenue +416.5% WoW — would appear in section 1 of the digest for a growth-profile brand.
+Both profiles carry the same shape: `primary_metrics`, `known_concerns`, and a free-text `context_note`. Personalisation operates in two places:
 
-**PROFILE_SCALE** is configured for brands where acquisition is mature and the questions are "what is the quality of the customers we are acquiring, and are we retaining them?" AOV weight increases to 1.0 (matching revenue), repeat purchase rate metrics are promoted in ranking, and ROAS is treated as a floor constraint rather than a primary optimization target. The Jan 29 cohort signal — AOV INR 33,679, 2.7x the baseline — would be the lead finding for a scale-profile brand, with the interpretation framing it as a high-intent segment worth deeper analysis.
+1. **Re-ranking at the online layer.** `apply_profile_reranking()` in `report_generator.py` multiplies `final_score` by 1.3 for any finding whose metric is in the customer's `primary_metrics`. This is what actually re-orders the facts the LLM sees — the same Dec 10 dataset produces a digest led by `new_customer_share` for a growth profile vs `aov` for a scale profile.
+
+2. **Prompt injection.** The profile's priorities and known concerns are interpolated into the user message so the LLM weights narrative emphasis the same direction the re-ranker already did.
+
+**PROFILE_GROWTH** — primary metrics: revenue, ROAS, new_customer_share, spend, attributed_revenue, new_orders. Configured for brands where the question is "are we acquiring customers efficiently?" The Dec 10 signal — new customer revenue +416.5% WoW — boosted to the top of the digest by the priority multiplier.
+
+**PROFILE_SCALE** — primary metrics: revenue, AOV, returning_orders, new_customer_share, orders. Configured for brands where acquisition is mature and the question is "what is the quality of the customers we are acquiring, and are we retaining them?" AOV and returning-order anomalies are promoted ahead of ROAS movements in the same ranked list.
+
+The multiplier is a simple, auditable mechanism. It is not a learned model — it is the cold-start prior. With engagement data the multiplier can be replaced by per-customer learned weights without changing the architecture.
 
 ---
 
@@ -99,7 +122,7 @@ The batch layer also writes a `data_quality.json` sidecar that flags: last-day c
 
 ### Online Layer (Per-Report)
 
-When a report is requested — either on a schedule or on-demand — the report generator reads `ranked_findings.json`, applies the customer's profile weights to re-rank the top findings, selects the top-N signals (N=5 for Daily Digest, N=8 for Weekly Report), converts each finding into a pre-computed fact sentence, and passes the structured payload to the LLM. The online layer adds latency for the LLM call. Target end-to-end latency for report generation: under 12 seconds at p95. The LLM call itself is given a 10-second timeout; if it fails, the system falls back to a template-rendered version of the fact sentences without narrative prose.
+When a report is requested — either on a schedule or on-demand — the report generator reads `ranked_findings.json`, applies the customer's profile re-ranker (`apply_profile_reranking`, +30% on priority metrics), selects the top-N signals (N=5 for Daily, N=8 for Weekly), converts each finding into a pre-computed fact sentence, and passes the structured payload to the LLM with prompt caching on the shared system prompt. The online layer adds latency for the LLM call. Target end-to-end latency: under 12 seconds at p95. On API failure or numeric-grounding failure, `render_template_fallback()` emits a deterministic markdown rendering of the fact sentences — ugly but always correct.
 
 ### Deterministic vs Generative Boundary
 
@@ -155,7 +178,7 @@ Raw CSVs (meta_ads, google_ads, shopify)
 
 **Risk:** The LLM attributes causation it cannot verify. "Revenue increased because the Meta campaign reached a new audience segment" sounds plausible and is entirely fabricated if the LLM was not given evidence of that mechanism. For a D2C brand making budget decisions based on these reports, a confident but wrong causal claim is worse than no claim at all.
 
-**Mitigation:** The system prompt contains three explicit rules. First: the LLM may only reference numbers present in the fact sentences passed to it; it may not compute, estimate, or extrapolate. Second: causal language is hedged by default — "consistent with," "may indicate," "warrants investigation" are the approved framings; "caused by," "due to," and "because" are prohibited. Third: if the LLM's output contains a number not present in the input fact sentences, the report generator's post-processing step flags and quarantines the output, triggering a fallback to template rendering. This is implemented as a regex scan over all numeric tokens in the output against the set of numeric tokens in the input.
+**Mitigation:** The system prompt contains three explicit rules. First: the LLM may only reference numbers present in the fact sentences passed to it; it may not compute, estimate, or extrapolate. Second: causal language is hedged by default — "consistent with," "may indicate," "warrants investigation" are the approved framings; "caused by," "due to," and "because" are prohibited. Third: `validate_numeric_grounding()` (in `report_generator.py`) regex-extracts every numeric token from the LLM output, normalises (strip commas, drop trailing `%`, round to 2dp, ignore single-digit ordinals), and verifies each appears in the FACTS + STEADY blocks. If any number is ungrounded, the output is rejected and `render_template_fallback()` produces a deterministic markdown rendering of the verified facts. The check is logged with the specific ungrounded tokens so the failure mode is debuggable, not silent.
 
 ### Failure 2: Alert Fatigue
 
