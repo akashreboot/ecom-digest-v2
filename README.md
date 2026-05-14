@@ -23,11 +23,32 @@ Create a `.env` file in the project root:
 ### Place the dataset
 Copy `metrics_159d.csv` into the `data/` folder.
 
-### Run notebooks in order
+### Run the interactive dashboard (presentation mode)
+
+    streamlit run dashboard.py
+
+Opens a 9-section walkthrough on http://localhost:8501. Every button
+runs the real code in `src/`, every action streams logs to the
+sidebar, and the LLM call is gated on `ANTHROPIC_API_KEY` (without
+a key the system shows the template fallback in action — useful for
+demoing the failure path too).
+
+Sections:
+1. Overview + architecture diagram
+2. EDA — DoW seasonality, the r=0.12 finding, the triple-counting trap
+3. Ranker — pick a date, inspect the math, see the fact sentences
+4. Personalisation — same date / two profiles / different leading findings
+5. Hallucination check — paste fake output, watch the validator catch it
+6. Report generation — run Claude, watch the logs, read the report
+7. Failure modes — three failures with a live demo of each mitigation
+8. Cost & scale — interactive calculator for 100 → 10k customers
+9. Full logs — every action this session, downloadable as JSON
+
+### Or run the notebooks directly
 1. `notebooks/01_eda.ipynb` — data exploration and baseline stats
-2. `notebooks/02_ranker_dev.ipynb` — ranking engine validation
-3. `notebooks/03_generate_reports.ipynb` — generate all 5 sample reports
-4. `notebooks/04_design_doc.ipynb` — generate design doc and tradeoffs
+2. `notebooks/02_ranker_dev.ipynb` — ranking engine validation, writes `ranked_findings.json`
+3. `notebooks/03_generate_reports.ipynb` — generates the sample reports
+4. `notebooks/04_design_doc.ipynb` — generates the design doc and tradeoffs
 
 ## Project structure
 
