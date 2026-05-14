@@ -2,54 +2,45 @@
 
 ## What I cut and why
 
-Several capabilities were deliberately left out, and I want to be direct about the reasoning rather than framing every omission as a principled architectural choice.
+Several capabilities are conspicuously absent, and none of them were forgotten.
 
-**Personalization ML model.** Without clickstream or engagement data, a learned model would be fitting noise. Rule-based growth vs. scale-stage profiles are a reasonable first approximation, but they're essentially educated guesses about what different customers care about. The profiles need validation before they deserve a more sophisticated implementation.
+**Personalization ML** was the most significant cut. A learned model for weighting metrics by customer behavior would be more defensible than my rule-based growth/scale profiles, but it requires click-stream or engagement data that doesn't exist yet. The two profiles are a reasonable prior, not a substitute—they encode assumptions about what growth-stage versus scale-stage brands care about, and those assumptions need to be validated before training anything on top of them.
 
-**GA4 sessions, bounce rate, and conversion funnel data.** Not in the dataset. The ranker operates entirely on revenue and order-side signals, which means it's blind to top-of-funnel dynamics. A D2C brand optimizing acquisition without session data is working with one hand tied behind its back—this is a meaningful gap, not a cosmetic one.
+**GA4 funnel metrics** (sessions, bounce rate, conversion steps) weren't in the dataset. I could have synthesized them, but synthetic data in a prototype creates false confidence in the architecture. The ranker is designed to accept additional metric columns; the plumbing is ready when the data is.
 
-**Calendar event awareness.** The current system will flag a January 1st revenue drop as anomalous. It isn't. Hardcoding known sale days and suppressing obvious calendar artifacts should have been in scope for v1; I deprioritized it in favor of the LLM grounding layer, which was the wrong call.
+**Email delivery, A/B testing infrastructure, and real-time alerting** were all out of scope by deliberate choice rather than time pressure. Delivery infrastructure is a solved problem and adds no signal in a prototype. A/B testing report variants requires real engagement data to measure against—running it now would generate noise, not insight. Real-time alerting adds operational complexity that isn't justified until we know daily batch isn't sufficient; for a morning digest use case, it probably is.
 
-**Hourly granularity, SKU-level breakdowns, real-time alerting, email delivery, and A/B testing.** These were genuinely out of scope or blocked by data availability, not just deferred. Daily batch is the right architecture for a daily digest product. The rest requires infrastructure that would have produced a deployment prototype rather than a product prototype.
-
----
+**Hourly granularity and SKU-level breakdowns** are dataset constraints, not design constraints. The architecture doesn't preclude them.
 
 ## What I'd build next
 
-In priority order, based on what would generate the most learning per unit of effort:
+In priority order, and each priority is contingent on the one before it producing signal:
 
-1. **Engagement feedback loop.** A thumbs up/down on each finding, plus click tracking on any recommended action. Without this, metric weight tuning is opinion-driven. Everything downstream depends on closing this loop first.
+1. **Engagement feedback loop first.** A thumbs up/down on each finding, plus click tracking on any linked metric, is the minimum viable signal. Nothing else on this list is worth building without it. This is the closed loop that makes everything downstream defensible.
 
-2. **Metric preference learning.** Once engagement signals exist, adjust per-tenant business weights based on which finding types drive follow-up actions. The z-score ranker architecture already supports pluggable weights—this is an incremental addition, not a rewrite.
+2. **Metric preference learning from engagement signals.** Once we have finding-level feedback, weight adjustments become a learning problem rather than a configuration problem. Even a simple logistic regression over "finding type × customer segment × engaged/ignored" is more honest than my current business weight constants.
 
-3. **Calendar event awareness.** Suppress known artifacts (holidays, prior sale days) and flag annotated events positively ("revenue up 40% WoW—your flash sale ran Tuesday"). This is the highest-confidence improvement I can name without customer data: false positives from calendar effects will erode trust faster than almost anything else.
+3. **Calendar event awareness.** Suppressing January 1st anomalies and flagging known promotional days would immediately reduce false positive noise. This is low-complexity, high-trust-building work—the kind of thing that makes customers feel understood rather than spammed.
 
-4. **Cross-tenant pattern library.** Aggregate anonymized patterns across similar brands to add benchmarking context—"brands at your stage typically see Thursday softness of 8–12%; yours is 22%." This makes individual findings meaningfully more actionable.
+4. **Cross-tenant pattern library.** Statements like "D2C brands at your revenue stage typically see Thursday order volume 12% below Tuesday baseline" require enough tenants and enough engagement history to be statistically grounded. This is a 12-month build, not a 3-month one.
 
-5. **Explanation confidence scoring.** The LLM currently hedges causation in language but doesn't expose a structured confidence signal. Scoring each causal hypothesis by data support (sample size, consistency across periods, statistical significance) would let the UI surface high-confidence findings differently and help customers calibrate trust over time.
-
----
+5. **Explanation confidence scoring.** The LLM currently hedges causation linguistically. I'd rather surface an explicit confidence tier per finding—high data support, moderate, speculative—so customers calibrate appropriately and so we can measure whether high-confidence findings drive more action.
 
 ## What I need to learn from real customers first
 
-Several design assumptions baked into this prototype could be completely wrong, and I'd rather know before building on top of them.
+Before any of the above gets prioritized, I have questions that prototypes can't answer:
 
-**Reading cadence.** Do customers read the daily digest daily, or do they accumulate and skim weekly? If the latter, the daily freshness optimization in the ranker is wasted and weekly summaries should be the primary artifact.
-
-**Which findings drive action vs. which get ignored.** The ranker scores by statistical unusualness and business weight. Customers may actually act on a narrower set of finding types than the model surfaces. Without click data, I'm guessing at what "useful" means.
-
-**False positive tolerance.** A risk-averse operator who ignores noisy alerts is a different calibration target than a growth-stage founder who wants everything flagged. The current thresholds reflect a judgment call I made without data.
-
-**Whether the two customer profiles actually behave differently in practice.** The growth vs. scale-stage segmentation is a hypothesis. It's possible the within-segment variance swamps the between-segment differences, in which case the profiling adds complexity without adding value.
-
----
+- **Do they read daily or skip to weekly?** The entire batch cadence assumption depends on this. If customers open Monday's report on Wednesday, daily freshness is wasted infrastructure cost.
+- **Which finding types drive follow-up actions versus get ignored?** I have hypotheses about which z-score thresholds feel actionable. I don't have evidence.
+- **What's the tolerance for false positives versus false negatives?** A brand that checks their dashboard obsessively wants high recall and will tolerate noise. A brand that only looks when the report flags something needs high precision. These are different products wearing the same interface.
+- **Do growth-stage and scale-stage brands actually behave differently in response to findings?** My profile split is a reasonable prior. It may be wrong. If scale-stage brands respond strongly to acquisition findings too, the segmentation logic needs revisiting before it gets encoded anywhere more permanent.
 
 ## Where this breaks at scale
 
-The current architecture is sequential and naive, which is fine for a prototype and a problem at production volume.
+I want to be specific rather than vague about this.
 
-**At 100 customers**, LLM latency becomes the binding constraint. Sequential API calls at roughly 3 seconds each means a 5-minute batch for 100 tenants—borderline acceptable until it isn't. More concerning: with a fixed prompt structure and similar input data shapes, reports start converging on the same phrasing and sentence patterns. Differentiation degrades before cost does.
+**At 100 customers**, two problems emerge. Sequential LLM calls at roughly 3 seconds each means a two-report-per-customer batch runs approximately 10 minutes. That's manageable but not comfortable, and it's fully blocking. Parallelization is straightforward but requires async refactoring and rate limit management. The subtler problem at 100 customers is report differentiation—with rule-based profiles and a shared prompt structure, reports across similar customers will start to look nearly identical. Customers will notice, and it will correctly feel like a mail merge rather than an analyst.
 
-**At 10,000 customers**, cost is the hard wall. Two report variants per customer at ~$0.15 each is $3,000 per day, or roughly $90,000 per month, on LLM spend alone before any other infrastructure. Prompt caching on shared system prompt components would recover a meaningful fraction of that, but the architecture needs a fundamentally different approach: pre-computed narrative templates for common finding patterns, LLM reserved for genuinely novel or high-stakes findings, and tiered generation based on customer plan. Tenant data isolation also becomes a compliance concern that needs explicit design, not assumption. And a nightly batch that takes 8+ hours to complete for 10,000 tenants is no longer a nightly batch—it's a problem.
+**At 10,000 customers**, cost becomes the binding constraint. At roughly $0.15 per report and two reports per customer, the daily LLM spend is approximately $3,000. Prompt caching on the static system prompt and metric context structure is the first mitigation, but it requires careful prompt architecture to maximize cache hit rate. Beyond cost, nightly batch SLA risk becomes real—a slow tenant cohort or a model latency spike could push delivery past the morning window customers expect. Tenant data isolation also needs to be explicit in the architecture; right now it's implicit in how I've structured the notebook. At 10,000 tenants, "implicit" is a liability.
 
-The honest summary: this prototype demonstrates the product concept and surfaces the right research questions. It is not a foundation you'd scale without meaningful rearchitecting of the generation pipeline.
+None of these are surprising failure modes, which is why I'm stating them plainly. The prototype is honest about what it is: a working proof of concept for the ranking and generation logic, not a production system.
