@@ -129,27 +129,37 @@ def _normalize_numbers(text: str) -> set:
         if clean in _IGNORE:
             continue
         try:
+            v = float(clean)
+            # Skip 4-digit years from date strings (2025-12-10 parses as 2025).
+            # Years are metadata, not metric claims.
+            if v == int(v) and 1900 <= int(v) <= 2100:
+                continue
             # Round to 2 decimal places to handle cosmetic precision differences
             # (e.g. "1.05" in output vs "1.051" in facts).
-            v = float(clean)
             out.add(f"{abs(v):.2f}".rstrip("0").rstrip("."))
         except ValueError:
             continue
     return out
 
 
-def validate_numeric_grounding(output: str, facts_text: str) -> Tuple[bool, List[str]]:
+def validate_numeric_grounding(output: str, *grounding_sources: str) -> Tuple[bool, List[str]]:
     """
-    Every number that appears in the LLM output should also appear in the
-    facts block the LLM was given. Numbers the LLM invents are hallucinations.
+    Every number that appears in the LLM output should also appear in one of
+    the grounding sources: the FACTS block, the STEADY block, the user prompt
+    metadata (DATE, CUSTOMER, etc.), and the SYSTEM_PROMPT (which legitimately
+    cites r~0.12). Numbers absent from all sources are hallucinations.
 
-    Returns (passed, list_of_ungrounded_numbers). Single-digit numbers
-    (0-10) are ignored because they're almost always typographic
-    (section ordinals, "3-4 sentences" prompt residue, etc).
+    Single-digit numbers 0-10 and 4-digit years 1900-2100 are ignored — they
+    are typographic / metadata, not metric claims.
+
+    Returns (passed, list_of_ungrounded_numbers).
     """
     in_output = _normalize_numbers(output)
-    in_facts  = _normalize_numbers(facts_text)
-    ungrounded = sorted(in_output - in_facts)
+    allowed = set()
+    for src in grounding_sources:
+        if src:
+            allowed.update(_normalize_numbers(src))
+    ungrounded = sorted(in_output - allowed)
     return (len(ungrounded) == 0, ungrounded)
 
 
@@ -378,7 +388,12 @@ class ReportGenerator:
             log.error("Falling back to template: %s", e)
             return render_template_fallback(top, steady, profile, date, "daily")
 
-        ok, ungrounded = validate_numeric_grounding(output, grounding_text)
+        # Validate against every text the LLM saw: facts+steady, user-prompt
+        # metadata (DATE, CUSTOMER, format spec), and the system prompt
+        # (which cites r~0.12 — the LLM correctly echoes it).
+        ok, ungrounded = validate_numeric_grounding(
+            output, grounding_text, prompt, SYSTEM_PROMPT,
+        )
         if not ok:
             log.warning("Numeric grounding FAILED — ungrounded numbers: %s. "
                         "Falling back to template.", ungrounded)
@@ -406,7 +421,9 @@ class ReportGenerator:
             log.error("Falling back to template: %s", e)
             return render_template_fallback(top, steady, profile, week_end, "weekly")
 
-        ok, ungrounded = validate_numeric_grounding(output, grounding_text)
+        ok, ungrounded = validate_numeric_grounding(
+            output, grounding_text, prompt, SYSTEM_PROMPT,
+        )
         if not ok:
             log.warning("Numeric grounding FAILED — ungrounded: %s. Falling back.",
                         ungrounded)

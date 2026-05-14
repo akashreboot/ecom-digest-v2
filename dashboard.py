@@ -540,10 +540,18 @@ def section_personalisation() -> None:
         return
 
     dates = ranker.available_dates()
+    # Default to a mid-dataset normal day, NOT Dec 10. The Dec 10 revenue spike
+    # is so dominant that revenue leads both profiles and the diff disappears —
+    # bad for demos. A normal day lets each profile's priorities surface.
+    default_idx = max(0, len(dates) - 30)
     target_date = st.selectbox(
         "Target date",
         options=dates,
-        index=dates.index("2025-12-10") if "2025-12-10" in dates else len(dates) - 30,
+        index=default_idx,
+        help=(
+            "Pick a normal weekday for the clearest diff. The Dec 10 revenue mega-spike "
+            "is so dominant that revenue leads both profiles regardless of priorities."
+        ),
     )
 
     if st.button("▶ Re-rank for both profiles", type="primary"):
@@ -576,16 +584,56 @@ def section_personalisation() -> None:
         st.caption(f"Priorities: {', '.join(PROFILE_SCALE.primary_metrics)}")
         st.dataframe(findings_table(scale[:7]), use_container_width=True, hide_index=True)
 
-    diff_growth = [f["metric"] for f in growth[:5]]
-    diff_scale  = [f["metric"] for f in scale[:5]]
-    if diff_growth != diff_scale:
+    # ── Positions 2-5 diff panel ─────────────────────────────────────────────
+    # The lead finding often matches because revenue dominates on big days.
+    # The interesting personalisation signal lives in positions 2-5.
+    st.subheader("Positions 1–5: where the profiles diverge")
+    st.caption("Lead is often shared — the personalisation signal usually lives below it.")
+
+    def _where(f: dict) -> str:
+        parts = [p for p in [f.get("channel", ""), f.get("campaign", ""),
+                              f.get("customer_type", "")] if p]
+        return " / ".join(parts) if parts else f.get("source", "")
+
+    diff_rows = []
+    for pos in range(5):
+        g = growth[pos] if pos < len(growth) else None
+        s = scale[pos]  if pos < len(scale)  else None
+        same = (g is not None and s is not None
+                and g["metric"] == s["metric"]
+                and g.get("channel") == s.get("channel")
+                and g.get("campaign") == s.get("campaign")
+                and g.get("customer_type") == s.get("customer_type"))
+        diff_rows.append({
+            "#":              f"#{pos + 1}",
+            "Growth metric":  g["metric"] if g else "—",
+            "Growth where":   _where(g) if g else "—",
+            "Growth boost":   "⭐" if g and g.get("_profile_boosted") else "",
+            "Scale metric":   s["metric"] if s else "—",
+            "Scale where":    _where(s) if s else "—",
+            "Scale boost":    "⭐" if s and s.get("_profile_boosted") else "",
+            "Match?":         "✓ same" if same else "✗ different",
+        })
+    st.dataframe(pd.DataFrame(diff_rows), use_container_width=True, hide_index=True)
+
+    n_different = sum(1 for r in diff_rows if r["Match?"].startswith("✗"))
+    g_lead, s_lead = growth[0]["metric"], scale[0]["metric"]
+    if g_lead != s_lead:
         st.success(
-            f"✅ Different top-5 ordering. Growth leads with **{growth[0]['metric']}**; "
-            f"scale leads with **{scale[0]['metric']}**. This is the cold-start prior — "
-            "in production these multipliers would be learned from engagement data."
+            f"✅ The lead itself diverges: growth leads with **{g_lead}**, scale with **{s_lead}**. "
+            f"Across positions 1–5, **{n_different}/5 rows differ**. This is the cold-start prior in action."
+        )
+    elif n_different > 0:
+        st.success(
+            f"✅ Lead matches (**{g_lead}**) because it dominates the score, but **{n_different}/5 positions "
+            "below the lead differ** — that's the visible personalisation signal. In production, learned "
+            "weights from engagement data would amplify this."
         )
     else:
-        st.warning("Top-5 happen to match on this date. Try Jan 29 or another date with broader signal.")
+        st.warning(
+            "Top-5 happen to match exactly on this date. Try a normal weekday (Dec 10 is dominated by "
+            "the revenue spike) — Jan 29 or any recent non-anomaly date should show divergence."
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
