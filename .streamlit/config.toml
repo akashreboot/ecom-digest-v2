@@ -1,0 +1,15 @@
+# Streamlit theme — OutOfTheBlue-inspired palette
+# Sets the base colours; finer styling lives in inject_ootb_css() in dashboard.py
+[theme]
+base                = "light"
+primaryColor        = "#2D2EFC"
+backgroundColor     = "#F8F9FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor           = "#0E1142"
+font                = "sans serif"
+
+[server]
+headless            = true
+
+[browser]
+gatherUsageStats    = false

@@ -169,6 +169,318 @@ def get_report_generator() -> Optional[ReportGenerator]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# OutOfTheBlue-inspired theme — pure CSS injection, no functional changes
+# ──────────────────────────────────────────────────────────────────────────────
+
+OOTB_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --ootb-navy:      #0E1142;
+    --ootb-navy-soft: #1A1A4E;
+    --ootb-blue:      #2D2EFC;
+    --ootb-blue-hover:#1E1FE8;
+    --ootb-lavender:  #EEF0FB;
+    --ootb-lavender-deep:#E5E7F8;
+    --ootb-cream:     #F8F9FB;
+    --ootb-card:      #FFFFFF;
+    --ootb-border:    #E5E7EB;
+    --ootb-mute:      #6B7280;
+    --ootb-red:       #EF4444;
+    --ootb-red-soft:  #FEE2E2;
+    --ootb-amber:     #F59E0B;
+    --ootb-amber-soft:#FEF3C7;
+    --ootb-green:     #10B981;
+    --ootb-green-soft:#D1FAE5;
+}
+
+/* ── Global typography ───────────────────────────────────────── */
+html, body, [class*="css"], .stApp {
+    font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif !important;
+    color: var(--ootb-navy);
+}
+
+/* ── Subtle grid background, OOTB-style ──────────────────────── */
+[data-testid="stAppViewContainer"] {
+    background: var(--ootb-cream);
+    background-image:
+        linear-gradient(rgba(14,17,66,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(14,17,66,0.025) 1px, transparent 1px);
+    background-size: 44px 44px;
+}
+
+/* Hide the default Streamlit header bar so the app feels native */
+[data-testid="stHeader"] {
+    background: transparent;
+    height: 0;
+}
+
+/* ── Headers ─────────────────────────────────────────────────── */
+h1 {
+    color: var(--ootb-navy) !important;
+    font-weight: 800 !important;
+    font-size: 2.1rem !important;
+    letter-spacing: -0.025em !important;
+    margin-bottom: 0.4rem !important;
+}
+h2 {
+    color: var(--ootb-navy) !important;
+    font-weight: 700 !important;
+    font-size: 1.45rem !important;
+    letter-spacing: -0.015em !important;
+    margin-top: 1.2rem !important;
+}
+h3 {
+    color: var(--ootb-navy-soft) !important;
+    font-weight: 600 !important;
+    font-size: 1.15rem !important;
+}
+
+/* Caption / small label styling */
+[data-testid="stCaptionContainer"], .stCaption {
+    color: var(--ootb-mute) !important;
+    font-weight: 500 !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* ── Sidebar — clean white panel ─────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: var(--ootb-card);
+    border-right: 1px solid var(--ootb-border);
+}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] .stMarkdown h1 {
+    font-size: 1.35rem !important;
+    color: var(--ootb-navy) !important;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label {
+    border-radius: 8px;
+    padding: 6px 10px;
+    margin-bottom: 2px;
+    transition: background 0.15s;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+    background: var(--ootb-lavender);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.stButton > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 1.2rem !important;
+    border: 1px solid var(--ootb-border) !important;
+    background: var(--ootb-card) !important;
+    color: var(--ootb-navy) !important;
+    transition: all 0.18s !important;
+    box-shadow: 0 1px 2px rgba(14,17,66,0.04) !important;
+}
+.stButton > button:hover {
+    border-color: var(--ootb-blue) !important;
+    color: var(--ootb-blue) !important;
+}
+.stButton > button[kind="primary"] {
+    background: var(--ootb-blue) !important;
+    color: white !important;
+    border-color: var(--ootb-blue) !important;
+    box-shadow: 0 2px 6px rgba(45,46,252,0.25) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: var(--ootb-blue-hover) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(45,46,252,0.35) !important;
+}
+
+.stDownloadButton > button {
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    background: var(--ootb-card) !important;
+    border: 1px solid var(--ootb-border) !important;
+    color: var(--ootb-navy) !important;
+}
+
+/* ── Metric cards — OOTB callout style ───────────────────────── */
+[data-testid="stMetric"] {
+    background: var(--ootb-card);
+    padding: 16px 20px;
+    border-radius: 14px;
+    border: 1px solid var(--ootb-border);
+    box-shadow: 0 1px 3px rgba(14,17,66,0.04);
+    transition: box-shadow 0.18s;
+}
+[data-testid="stMetric"]:hover {
+    box-shadow: 0 4px 12px rgba(14,17,66,0.08);
+}
+[data-testid="stMetricLabel"] {
+    color: var(--ootb-mute) !important;
+    font-weight: 500 !important;
+    font-size: 0.8rem !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--ootb-navy) !important;
+    font-weight: 700 !important;
+    font-size: 1.6rem !important;
+    letter-spacing: -0.01em;
+}
+[data-testid="stMetricDelta"] {
+    font-weight: 600 !important;
+    font-size: 0.78rem !important;
+}
+
+/* ── Alerts (st.info / success / warning / error) ───────────── */
+.stAlert {
+    border-radius: 12px !important;
+    border: none !important;
+    padding: 14px 18px !important;
+    box-shadow: 0 1px 2px rgba(14,17,66,0.04);
+}
+[data-testid="stNotificationContentInfo"],
+.stAlert[kind="info"] {
+    background: var(--ootb-lavender) !important;
+    color: var(--ootb-navy) !important;
+}
+[data-testid="stNotificationContentSuccess"],
+.stAlert[kind="success"] {
+    background: var(--ootb-green-soft) !important;
+    color: #065F46 !important;
+}
+[data-testid="stNotificationContentWarning"],
+.stAlert[kind="warning"] {
+    background: var(--ootb-amber-soft) !important;
+    color: #92400E !important;
+}
+[data-testid="stNotificationContentError"],
+.stAlert[kind="error"] {
+    background: var(--ootb-red-soft) !important;
+    color: #991B1B !important;
+}
+
+/* ── Tables / dataframes ─────────────────────────────────────── */
+.stDataFrame, [data-testid="stDataFrame"] {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    border: 1px solid var(--ootb-border) !important;
+    box-shadow: 0 1px 3px rgba(14,17,66,0.04);
+}
+
+/* ── Expanders ───────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border-radius: 12px !important;
+    border: 1px solid var(--ootb-border) !important;
+    background: var(--ootb-card) !important;
+    box-shadow: 0 1px 2px rgba(14,17,66,0.03);
+    margin-bottom: 8px;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    color: var(--ootb-navy) !important;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────── */
+[data-baseweb="tab-list"] {
+    gap: 4px !important;
+    border-bottom: 1px solid var(--ootb-border) !important;
+}
+[data-baseweb="tab"] {
+    background: transparent !important;
+    border-radius: 8px 8px 0 0 !important;
+    padding: 10px 18px !important;
+    font-weight: 600 !important;
+    color: var(--ootb-mute) !important;
+}
+[data-baseweb="tab"][aria-selected="true"] {
+    background: var(--ootb-card) !important;
+    color: var(--ootb-blue) !important;
+    border-bottom: 2px solid var(--ootb-blue) !important;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+.stCode, code {
+    border-radius: 8px !important;
+}
+pre code {
+    background: #0E1142 !important;
+    color: #E5E7F8 !important;
+    border-radius: 10px !important;
+    padding: 12px !important;
+}
+code:not(pre code) {
+    background: var(--ootb-lavender) !important;
+    color: var(--ootb-navy) !important;
+    padding: 2px 6px !important;
+    font-size: 0.88em !important;
+    border-radius: 4px !important;
+}
+
+/* ── Selectbox / radio / slider ──────────────────────────────── */
+.stSelectbox label,
+.stRadio label,
+.stSlider label,
+.stTextInput label,
+.stTextArea label,
+.stMultiSelect label {
+    color: var(--ootb-mute) !important;
+    font-weight: 600 !important;
+    font-size: 0.78rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stTextArea textarea {
+    border-radius: 10px !important;
+    border: 1px solid var(--ootb-border) !important;
+}
+
+.stSlider [role="slider"] {
+    background: var(--ootb-blue) !important;
+}
+
+/* Toggle */
+.stToggle [role="switch"][aria-checked="true"] {
+    background: var(--ootb-blue) !important;
+}
+
+/* ── Spinner colour ──────────────────────────────────────────── */
+.stSpinner > div {
+    border-top-color: var(--ootb-blue) !important;
+}
+
+/* ── Status (st.status) container ────────────────────────────── */
+[data-testid="stStatusWidget"], [data-testid="stExpander"][open] {
+    border-radius: 12px !important;
+}
+
+/* ── Hide footer ─────────────────────────────────────────────── */
+footer {visibility: hidden;}
+</style>
+"""
+
+
+def inject_ootb_css() -> None:
+    """Inject the OutOfTheBlue-inspired stylesheet. Pure visual; no functional change."""
+    st.markdown(OOTB_CSS, unsafe_allow_html=True)
+
+
+def severity_pill(label: str, level: str = "info") -> str:
+    """Returns an HTML pill matching OutOfTheBlue's severity badge style.
+    Use inside `st.markdown(..., unsafe_allow_html=True)`."""
+    palette = {
+        "high":   ("#FEE2E2", "#991B1B"),
+        "medium": ("#FEF3C7", "#92400E"),
+        "low":    ("#D1FAE5", "#065F46"),
+        "live":   ("#DBEAFE", "#1E40AF"),
+        "info":   ("#EEF0FB", "#1A1A4E"),
+    }
+    bg, fg = palette.get(level.lower(), palette["info"])
+    return (f'<span style="display:inline-block;background:{bg};color:{fg};'
+            f'padding:3px 10px;border-radius:999px;font-size:0.72rem;'
+            f'font-weight:600;letter-spacing:0.02em;margin-right:6px;">{label}</span>')
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Shared UI helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -254,27 +566,21 @@ def section_overview() -> None:
         st.graphviz_chart("""
             digraph G {
                 rankdir=TB;
-                node [shape=box, style="rounded,filled", fontname="Helvetica"];
+                bgcolor="transparent";
+                node [shape=box, style="rounded,filled", fontname="Inter, Helvetica",
+                      fontcolor="#0E1142", color="#E5E7EB", penwidth=1, margin="0.25,0.15"];
+                edge [color="#9CA3AF", fontname="Inter", fontsize=10, fontcolor="#6B7280"];
 
-                csv [label="metrics_159d.csv\\n(159 days, ~19k rows)", fillcolor="#e3f2fd"];
-
-                ranker [label="ranker.py — DETERMINISTIC\\n• 28d rolling z (same-DoW)\\n• WoW + MoM deltas\\n• Business weights\\n• Ratio cap, dedup, DQ flag", fillcolor="#fff3e0"];
-
-                json [label="ranked_findings.json", fillcolor="#f3e5f5"];
-
-                profile [label="Customer profile\\nPRIORITY_BOOST = 1.3x", fillcolor="#e8f5e9"];
-
-                rerank [label="apply_profile_reranking()", fillcolor="#e8f5e9"];
-
-                steady [label="STEADY FACTS block\\n(3 low-z high-weight metrics)", fillcolor="#e8f5e9"];
-
-                llm [label="Claude API — GENERATIVE\\n• Cached system prompt\\n• Retry + backoff\\n• Strict format", fillcolor="#ffebee"];
-
-                check [label="validate_numeric_grounding()\\nregex every numeric token\\nvs facts block", fillcolor="#fffde7"];
-
-                fallback [label="render_template_fallback()", fillcolor="#fafafa"];
-
-                report [label="Daily / Weekly Report\\n(.md, 5 sections)", fillcolor="#e1f5fe"];
+                csv      [label="metrics_159d.csv\\n(159 days, ~19k rows)", fillcolor="#EEF0FB"];
+                ranker   [label="ranker.py — DETERMINISTIC\\n• 28d rolling z (same-DoW)\\n• WoW + MoM deltas\\n• Business weights\\n• Ratio cap, dedup, DQ flag", fillcolor="#E5E7F8"];
+                json     [label="ranked_findings.json", fillcolor="#FFFFFF"];
+                profile  [label="Customer profile\\nPRIORITY_BOOST = 1.3x", fillcolor="#D1FAE5"];
+                rerank   [label="apply_profile_reranking()", fillcolor="#D1FAE5"];
+                steady   [label="STEADY FACTS block\\n(3 low-z high-weight metrics)", fillcolor="#D1FAE5"];
+                llm      [label="Claude API — GENERATIVE\\n• Cached system prompt\\n• Retry + backoff\\n• Strict format", fillcolor="#FEE2E2"];
+                check    [label="validate_numeric_grounding()\\nregex every numeric token\\nvs facts block", fillcolor="#FEF3C7"];
+                fallback [label="render_template_fallback()", fillcolor="#FFFFFF"];
+                report   [label="Daily / Weekly Report\\n(.md, 5 sections)", fillcolor="#2D2EFC", fontcolor="white"];
 
                 csv -> ranker -> json -> rerank;
                 profile -> rerank;
@@ -282,8 +588,8 @@ def section_overview() -> None:
                 steady -> llm;
                 rerank -> llm;
                 llm -> check;
-                check -> report [label="passed"];
-                check -> fallback [label="failed", color="red"];
+                check -> report [label="passed", color="#10B981", fontcolor="#10B981"];
+                check -> fallback [label="failed", color="#EF4444", fontcolor="#EF4444"];
                 fallback -> report;
             }
         """)
@@ -1129,6 +1435,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    inject_ootb_css()
     setup_logging()
 
     st.sidebar.title("📊 Ecom Digest")
