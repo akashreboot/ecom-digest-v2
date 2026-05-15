@@ -14,17 +14,19 @@ Several capabilities are conspicuously absent, and none of them were forgotten.
 
 ## What I'd build next
 
-In priority order, and each priority is contingent on the one before it producing signal:
+Three architectural upgrades, each replacing a specific structural weakness of v1 with a known-better, industry-validated alternative. Then two product-layer items contingent on customer-feedback data.
 
-1. **Engagement feedback loop first.** A thumbs up/down on each finding, plus click tracking on any linked metric, is the minimum viable signal. Nothing else on this list is worth building without it. This is the closed loop that makes everything downstream defensible.
+1. **STL or Prophet decomposition for the baseline.** The current rolling-mean-with-DoW-adjustment is correct for the prototype scope, but it can't model annual seasonality (Diwali, EOSS, Christmas), can't adapt fast to genuine level shifts, and isn't robust when bad days enter the baseline window. STL separates trend, seasonality, and residual properly; Prophet adds explicit holiday calendars and changepoint detection. Z-score the residual, not the raw value. Used in production by Netflix, Uber, LinkedIn, DataDog Watchdog, and Booking.com. The reason I didn't ship it in v1: STL needs two cycles of the longest seasonality, and annual seasonality needs two years of history. The current dataset is 160 days.
 
-2. **Metric preference learning from engagement signals.** Once we have finding-level feedback, weight adjustments become a learning problem rather than a configuration problem. Even a simple logistic regression over "finding type × customer segment × engaged/ignored" is more honest than my current business weight constants.
+2. **CausalImpact for the attribution question.** Right now the system hedges causation because the bivariate correlation is 0.12. The grown-up answer is Bayesian Structural Time Series (Brodersen et al. 2015, Google Research) — given an intervention date and a control series, it estimates the counterfactual with credible intervals. Instead of "revenue is up but we can't infer", the system says "Meta budget +50% on Dec 4 drove +12% over counterfactual, 95% CI 7–17%." Used internally at Google, published in a Walmart Global Tech case study, standard at Lifesight, Measured, Recast, and every other incrementality vendor. Didn't ship because the dataset has no labelled interventions and no clean control series.
 
-3. **Calendar event awareness.** Suppressing January 1st anomalies and flagging known promotional days would immediately reduce false positive noise. This is low-complexity, high-trust-building work—the kind of thing that makes customers feel understood rather than spammed.
+3. **Cross-metric story grouping.** Today five correlated findings on the same date become five bullets. Meta CPM up + CPC up + CTR down + ROAS down is one story (auction pressure), not four findings. Add a clustering step between ranker and LLM — pairwise similarity on (source, channel, campaign, direction), connected components, then a small LLM call to synthesize a story headline. Anodot, Outlier.ai (acquired by Salesforce), OutOfTheBlue, and DataDog Watchdog all do this. Marginal value at the prototype's 5–10 findings per day; large win at multi-tenant scale.
 
-4. **Cross-tenant pattern library.** Statements like "D2C brands at your revenue stage typically see Thursday order volume 12% below Tuesday baseline" require enough tenants and enough engagement history to be statistically grounded. This is a 12-month build, not a 3-month one.
+4. **Engagement feedback loop.** Thumbs up/down on each finding, plus click tracking on any linked metric. None of the per-customer-learning items below this point are worth building without it.
 
-5. **Explanation confidence scoring.** The LLM currently hedges causation linguistically. I'd rather surface an explicit confidence tier per finding—high data support, moderate, speculative—so customers calibrate appropriately and so we can measure whether high-confidence findings drive more action.
+5. **Metric-preference learning from engagement signals.** Once finding-level feedback exists, replace the global business-weight constants with per-customer learned weights from a simple logistic regression over "finding type × customer segment × engaged/ignored." Removes the cold-start assumption from the personalisation layer.
+
+Full v1-to-v2 evolution including implementation sketches, trade-off analysis, my research path to each upgrade, and a comparison table of what production systems at Netflix, Booking, Uber, LinkedIn, DataDog, Anodot, OutOfTheBlue, Google, and Walmart actually use is in `OPTIMIZATION_JOURNEY.md`.
 
 ## What I need to learn from real customers first
 

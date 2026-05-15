@@ -447,7 +447,9 @@ def section_ranker() -> None:
         "are weighted into `stat_score`, multiplied by the business weight from `BUSINESS_WEIGHTS[metric]`, "
         "and packaged into a `Finding` dataclass. The list is then sorted with the 3-level tuple key "
         "`(is_data_quality_flag, not is_alert, -final_score)` and sliced to `top_n`. No LLM. Same input → "
-        "same output, every time."
+        "same output, every time. **v2 upgrade path:** replace the rolling-mean baseline with STL or "
+        "Prophet decomposition (Netflix, Uber, DataDog Watchdog do this) — full reasoning in "
+        "`OPTIMIZATION_JOURNEY.md`."
     )
 
     ranker = get_ranker()
@@ -557,7 +559,9 @@ def section_personalisation() -> None:
         "`_profile_boosted = True`. The list is then re-sorted with the same 3-level tuple key the ranker uses. "
         "Both result lists are shown side by side; the diff panel below compares positions 1–5 cell by cell. "
         "The boost is a constant `PROFILE_BOOST = 1.3` in `report_generator.py` — easy to tune, easy to "
-        "replace with a learned weight later."
+        "replace with a learned weight later. **v2 upgrade path:** add a clustering step between rerank and "
+        "the LLM prompt so correlated findings (Meta CPM + CPC + CTR moving together) collapse into one "
+        "story — Anodot and OutOfTheBlue both ship this pattern. See `OPTIMIZATION_JOURNEY.md`."
     )
 
     ranker = get_ranker()
@@ -689,7 +693,10 @@ def section_grounding() -> None:
         "(0–10), and rounds to 2dp. The output set is compared against the union of allowed sources via "
         "`set difference`. Any number in the output but not in any input is returned in the `ungrounded` list "
         "and fails the check. In the live pipeline this rejection triggers `render_template_fallback()` instead "
-        "of returning the LLM text. The expander below shows the actual extracted token sets."
+        "of returning the LLM text. The expander below shows the actual extracted token sets. "
+        "**v2 upgrade path:** the system currently hedges causation at r=0.12; v2 adds CausalImpact "
+        "(Bayesian Structural Time Series, Google 2015) so attribution questions get a counterfactual "
+        "estimate with credible intervals instead of a disclaimer. See `OPTIMIZATION_JOURNEY.md`."
     )
 
     if not REPORT_IMPORT_OK:

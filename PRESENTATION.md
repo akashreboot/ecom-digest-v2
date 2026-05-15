@@ -259,6 +259,90 @@ The system errs hard on the side of epistemic honesty. **Causal language banned*
 
 ---
 
+## A8. The v1 → v2 architectural evolution
+
+When asked "is your ranking approach the best, or what would you do differently?", I lead with three specific, named, industry-validated upgrades — not vague more-ML.
+
+### Upgrade 1 — STL or Prophet for the baseline
+
+**What v1 does:** 28-day rolling mean with same-day-of-week adjustment. Correct for the prototype scope.
+
+**What v1 can't do:** handle annual seasonality (Diwali, EOSS, Christmas), adapt fast to genuine level shifts (new product launch doubling revenue), or stay robust when one bad day is in the baseline window.
+
+**v2 replacement:** STL decomposition (Cleveland et al. 1990) or Prophet (Meta's open-source extension with explicit holiday calendars and changepoint detection). The pipeline:
+
+```
+For each metric series, nightly:
+  trend, seasonal, residual = STL(series, period=7).fit()
+  z_score = (today_value - trend(today) - seasonal(today)) / std(residual)
+  # downstream stays identical
+```
+
+The interface contract with the LLM doesn't change — only the upstream z computation is more honest.
+
+**Production usage:** Netflix (streaming-quality anomaly detection), Uber (Prophet for capacity), LinkedIn (Luminol library), DataDog Watchdog, Booking.com engineering blog.
+
+**Why not in v1:** STL needs at least two cycles of the longest seasonality. Annual seasonality needs 2+ years of data; the current dataset is 160 days.
+
+### Upgrade 2 — CausalImpact for the attribution question
+
+**What v1 does:** hedges causation. "Revenue and Meta spend moved together but this does not confirm paid acquisition drove the result." Correct, but unsatisfying.
+
+**What v1 can't do:** answer "did my budget change drive revenue?" with a number. The brand owner gets a disclaimer.
+
+**v2 addition:** CausalImpact — Google's Bayesian Structural Time Series library (Brodersen et al. 2015). Pipeline:
+
+```
+For each flagged or detected intervention:
+  pre  = series before intervention_date
+  ctrl = a series that wasn't affected by the intervention
+  model = CausalImpact(target=series, control=ctrl, intervention=intervention_date).fit()
+  # surface: "Meta budget +50% on Dec 4 → revenue +12% over counterfactual
+  #         (95% CI: 7-17%, posterior P(lift>0) = 0.97)"
+```
+
+This converts hedging into decision-grade attribution.
+
+**Production usage:** Google (introduced the technique, uses internally), Walmart Global Tech (published case study), Lifesight, Measured, Recast (all major incrementality vendors), Meta's Robyn (related state-space modelling).
+
+**Why not in v1:** the dataset has no labelled interventions and the channels overlap in customer base, so there's no clean control series.
+
+### Upgrade 3 — Cross-metric story grouping
+
+**What v1 does:** independent findings. Five findings = five bullets.
+
+**What v1 can't do:** recognise that Meta CPM +18%, Meta CPC +14%, Meta CTR -8% and Meta ROAS -22% on the same day are **one story** (auction pressure), not four findings.
+
+**v2 addition:** clustering step between ranker and LLM. Pipeline:
+
+```
+After top-N + profile rerank:
+  similarity[i,j] = 0.4·same_source + 0.3·same_channel + 0.2·same_campaign + 0.1·matched_direction
+  clusters = connected_components(similarity > 0.7)
+  for each cluster of 2+ findings:
+      story_finding = synthesize_story_headline(cluster)  # tiny LLM call or rule-based template
+```
+
+The user-facing digest collapses four bullets into one story: *"Auction pressure on retargeting_meta_001 today — CPM, CPC, and CTR all moved against you, ROAS dropping 22%."*
+
+**Production usage:** Anodot (their core "stories" feature), Outlier.ai (acquired by Salesforce), OutOfTheBlue's incident summary card, DataDog Watchdog correlated-alert grouping, Splunk ITSI.
+
+**Why not in v1:** at 5-10 findings per day, the marginal value of grouping is small; the design lands the win at >20 findings per day or multi-tenant scale.
+
+### What stays the same in v2
+
+The architectural skeleton is method-agnostic:
+- Python computes, LLM explains — independent of scoring method
+- Numeric grounding validator — independent of scoring method
+- Retry, fallback, prompt caching — all independent
+- 3-level sort key, top-N slicing, profile rerank — compose with any upstream signal
+
+The upgrades change **how the z-score is computed** and **what additional findings get surfaced**. They don't change the architecture.
+
+Full v1-to-v2 narrative with research path and enterprise comparison table is in `OPTIMIZATION_JOURNEY.md`.
+
+---
+
 # PART B — The 5-minute presentation script
 
 > Approximately 750 words at conversational pace (~150 wpm). Each section is a beat — pause briefly between beats. Numbers in **bold** are the ones you point at on screen.
@@ -305,9 +389,9 @@ Third, **Thursdays are the strongest day of the week and Sundays the weakest, wi
 
 "At 100 customers it's fine. At **10,000 customers** the binding constraint is cost — about USD 110k per month on Sonnet without caching. **Prompt caching on the shared system prompt cuts that by roughly 80%.** A tiered model strategy — Haiku for low-engagement customers, Sonnet for high-value accounts — cuts further. With both, total LLM spend at 10,000 customers drops from 15 lakhs per month to about 4 lakhs."
 
-### Beat 9 — Honest about what's not built (25 seconds)
+### Beat 9 — The v2 architecture I'd ship next (35 seconds)
 
-"What I deliberately didn't build — engagement-based learned weights, because no click data exists yet; calendar awareness, which would have been the next thing if I'd had another week; A/B testing infrastructure for report variants, because there's no engagement data to A/B against. These are roadmap, not omissions. The current system is the cold-start prior that buys time while you collect the data needed to do better."
+"Three specific upgrades, not vague more-ML. **First — replace the rolling baseline with STL or Prophet decomposition.** Trend, seasonality, and residual handled properly; holidays modelled explicitly. Netflix, Uber, DataDog Watchdog all use this pattern. **Second — add CausalImpact for the attribution question.** Bayesian structural time series, from Google's 2015 paper. Instead of hedging at r=0.12 I'd give a counterfactual estimate with credible intervals — Walmart, Lifesight, every serious incrementality vendor uses this. **Third — cross-metric story grouping.** Four correlated findings should become one story bullet headlined by the common cause. Anodot and OutOfTheBlue both do this. None of these are speculative — they're the standard production upgrades. I didn't ship them in v1 because the dataset doesn't support them yet: STL needs two cycles of annual seasonality, CausalImpact needs labelled interventions, and story grouping has marginal value at 160-day single-tenant scale. I wrote up the full v1-to-v2 evolution in `OPTIMIZATION_JOURNEY.md` if you want the implementation sketches."
 
 ### Beat 10 — Close (20 seconds)
 
