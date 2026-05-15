@@ -50,6 +50,24 @@ Sections:
 3. `notebooks/03_generate_reports.ipynb` — generates the sample reports
 4. `notebooks/04_design_doc.ipynb` — generates the design doc and tradeoffs
 
+## Deploying to Streamlit Community Cloud
+
+The dashboard is deployable on [share.streamlit.io](https://share.streamlit.io) in five steps.
+
+1. **Push this repo to GitHub** if it isn't already public-or-accessible to your Streamlit Cloud account.
+2. **Configure secrets locally** for testing:
+   - Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`
+   - Replace `your_api_key_here` with your real Anthropic API key
+   - `.streamlit/secrets.toml` is gitignored — it will never be committed
+3. **Create the app** on Streamlit Cloud: New app → repo → branch → `dashboard.py` as the main file
+4. **Paste secrets** under the app's **Settings → Secrets** panel. Use the exact same TOML contents you used locally — Streamlit Cloud exposes them via both `st.secrets["ANTHROPIC_API_KEY"]` and the `ANTHROPIC_API_KEY` env var.
+5. **Handle the dataset**. `data/metrics_159d.csv` is gitignored (the dataset notice forbids redistribution) and Streamlit Cloud doesn't auto-upload it. Three options, in order of preference:
+   - Upload a copy to a private S3 / GCS bucket and add download-on-startup logic
+   - Use a Streamlit file_uploader in section 1 so the panel can drop the CSV at runtime
+   - Bundle a small anonymised demo CSV that's safe to commit publicly
+
+The secrets bridge in `dashboard.py:_bridge_secrets_to_env()` reads `st.secrets["ANTHROPIC_API_KEY"]` and copies it into the `ANTHROPIC_API_KEY` environment variable before any code that needs it loads, so `report_generator.py`'s existing `os.getenv` path keeps working without modification.
+
 ## Project structure
 
     ecom-digest/

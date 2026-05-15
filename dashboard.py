@@ -1128,6 +1128,28 @@ def render_sidebar_log_tail() -> None:
         )
 
 
+def _bridge_secrets_to_env() -> None:
+    """
+    Bridge Streamlit secrets to environment variables so report_generator.py
+    (which reads via os.getenv) picks them up on Streamlit Cloud and locally.
+    Precedence: existing env var > st.secrets > nothing (demo mode).
+
+    Wrapped in try/except because st.secrets raises FileNotFoundError when
+    no .streamlit/secrets.toml exists locally and the app is running
+    without Streamlit Cloud secrets configured — that's a valid mode.
+    """
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY")
+        if key and key != "your_api_key_here":
+            os.environ["ANTHROPIC_API_KEY"] = key
+    except (FileNotFoundError, KeyError, AttributeError):
+        # No secrets.toml and no Streamlit Cloud secrets — fine, dashboard
+        # falls through to the .env loader in report_generator.py.
+        pass
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Ecom Digest — Live Walkthrough",
@@ -1136,6 +1158,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    _bridge_secrets_to_env()
     setup_logging()
 
     st.sidebar.title("📊 Ecom Digest")
