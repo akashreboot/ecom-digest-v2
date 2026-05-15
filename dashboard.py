@@ -173,8 +173,8 @@ def get_report_generator() -> Optional[ReportGenerator]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def narration(text: str) -> None:
-    """Renders a presenter-script callout the user can read out loud."""
-    st.info(f"**🎤 Presenter script** — {text}")
+    """Renders an 'Under the hood' callout — what the code is doing right now."""
+    st.info(f"**🔧 Under the hood** — {text}")
 
 
 def step_header(n: int, total: int, title: str, subtitle: str = "") -> None:
@@ -237,10 +237,12 @@ def section_overview() -> None:
     step_header(1, 9, "Ecom Digest",
                 "A daily and weekly performance digest for D2C brands, grounded so it can't hallucinate.")
     narration(
-        "Strip away the technical detail and this system answers one question every morning: "
-        "'Out of everything that happened yesterday, what are the 3–5 things that actually matter, and why?' "
-        "The central design choice is a hard split — Python computes, the LLM only explains. "
-        "Every number the LLM writes is pre-computed and verified."
+        "When this page renders, the dashboard imports `ranker.py` and `report_generator.py` from `src/`, "
+        "wires a `StreamlitLogHandler` into Python's root logger so every log line from any module flows into "
+        "the live tail in the sidebar, and runs `env_status_panel()` — which checks for the dataset file, "
+        "the import status of both modules, and the `ANTHROPIC_API_KEY` env var. The architecture diagram is "
+        "rendered client-side from a DOT graph (no system binaries needed). Nothing else runs until you click "
+        "into a later section — the ranker is built lazily via `@st.cache_resource` on first use."
     )
 
     env_status_panel()
@@ -318,10 +320,13 @@ def section_eda() -> None:
                 "Three findings from EDA shaped the entire design.")
 
     narration(
-        "Before writing any ranking logic I spent half a day in a notebook understanding the shape of the data. "
-        "Three findings changed the architecture: the spend–revenue correlation is only 0.12 so causal language is forbidden; "
-        "91% of orders are unattributed which forced a dedup rule; and the day-of-week swing is so strong that raw z-scores "
-        "would flag every Sunday."
+        "When this section opens, `get_raw_df()` reads `data/metrics_159d.csv` via "
+        "`pd.read_csv(parse_dates=['date'])` and is wrapped in `@st.cache_data` so subsequent renders skip the "
+        "I/O. Each tab below performs different DataFrame operations live: the schema tab calls "
+        "`df.isnull().sum()` and `value_counts()`; the DoW tab does a `groupby('date').sum()` and renders via "
+        "Altair; the correlation tab merges Meta spend with Shopify revenue on date and calls `.corr()`; the "
+        "triple-counting tab does a `groupby('channel').size()`. Every number is computed in real time from "
+        "the actual CSV — no static fixtures."
     )
 
     df = get_raw_df()
@@ -434,10 +439,15 @@ def section_ranker() -> None:
                 "Picks the 3–5 things that matter, with no LLM in sight.")
 
     narration(
-        "Every metric movement is scored with the same formula. The score combines three signals — "
-        "z-score against the same-weekday baseline, week-over-week delta, and month-over-month delta — "
-        "then multiplied by a business-importance weight. Everything you see here is pure Python. "
-        "Run it twice with the same input, you get the exact same output."
+        "Clicking **Rank this day** calls `ranker.rank_day(target_date, top_n)`. That iterates "
+        "`self._series` (~200 entries built once at construction time and cached), and for each series "
+        "calls `_score_series_on_date()`. Inside the scorer: same-DoW mean and std are looked up, "
+        "z = (value − baseline) / std is computed, WoW and MoM deltas are computed by index lookup at "
+        "`date − 7d` and `date − 28d`, ratio metrics are clipped at ±500% via `np.clip`, the three signals "
+        "are weighted into `stat_score`, multiplied by the business weight from `BUSINESS_WEIGHTS[metric]`, "
+        "and packaged into a `Finding` dataclass. The list is then sorted with the 3-level tuple key "
+        "`(is_data_quality_flag, not is_alert, -final_score)` and sliced to `top_n`. No LLM. Same input → "
+        "same output, every time."
     )
 
     ranker = get_ranker()
@@ -528,10 +538,14 @@ def section_personalisation() -> None:
                 "Same date, same data — two profiles, two different leading findings.")
 
     narration(
-        "The most common interview question on this design will be: 'how is personalisation real and not just "
-        "a label?'. The answer is `apply_profile_reranking()` — it multiplies the score of any finding whose "
-        "metric is in the customer's priority list by 1.3 and re-sorts. You'll see the leading finding change "
-        "depending on which profile you pick, for the exact same date."
+        "Clicking the button calls `ranker.rank_day(date, top_n=15)` once, then runs "
+        "`apply_profile_reranking(findings, profile)` twice — once for `PROFILE_GROWTH`, once for "
+        "`PROFILE_SCALE`. Inside the reranker: a list comprehension iterates `findings`, copies each dict, and "
+        "if `f['metric'] in profile.primary_metrics` it multiplies `final_score × 1.3` and tags "
+        "`_profile_boosted = True`. The list is then re-sorted with the same 3-level tuple key the ranker uses. "
+        "Both result lists are shown side by side; the diff panel below compares positions 1–5 cell by cell. "
+        "The boost is a constant `PROFILE_BOOST = 1.3` in `report_generator.py` — easy to tune, easy to "
+        "replace with a learned weight later."
     )
 
     ranker = get_ranker()
@@ -645,11 +659,13 @@ def section_grounding() -> None:
                 "Watch the validator catch an invented number.")
 
     narration(
-        "The system prompt forbids invented numbers, but a rule in a prompt is a wish, not a guarantee. "
-        "After every LLM call I run `validate_numeric_grounding()` — it regex-extracts every numeric token "
-        "from the output, normalises (strips commas and percent signs, rounds to 2dp), and verifies each appears "
-        "in the FACTS block. If any number is ungrounded, the output is rejected and a deterministic template "
-        "fallback fires. This is the third layer behind a claim of zero hallucination."
+        "Clicking **Validate** calls `validate_numeric_grounding(output, facts, user_prompt, SYSTEM_PROMPT)`. "
+        "Inside: `_normalize_numbers(text)` runs the regex `[+-]?\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?%?|...` against "
+        "each input, strips commas and `%`, casts to float, drops 4-digit years (1900–2100) and small ordinals "
+        "(0–10), and rounds to 2dp. The output set is compared against the union of allowed sources via "
+        "`set difference`. Any number in the output but not in any input is returned in the `ungrounded` list "
+        "and fails the check. In the live pipeline this rejection triggers `render_template_fallback()` instead "
+        "of returning the LLM text. The expander below shows the actual extracted token sets."
     )
 
     if not REPORT_IMPORT_OK:
@@ -717,10 +733,15 @@ def section_report_generation() -> None:
                 "Click the button. Watch the logs. Read the report.")
 
     narration(
-        "This is the only point where the LLM enters the system. We send a system prompt with strict rules "
-        "(cached for cost), a user prompt containing the pre-computed facts and the customer profile, and we "
-        "validate the numbers in the response before showing it. Watch the log panel — you'll see the "
-        "cache_read tokens go up on the second call, latency on every call, and the grounding check pass or fail."
+        "Clicking **Generate** runs the full online pipeline: `ranker.rank_day(date)` → "
+        "`apply_profile_reranking(findings, profile)` → slice top 5 (or 8 weekly) → "
+        "`steady_findings_for_date()` picks 3 low-z high-business-weight findings → `build_daily_prompt()` "
+        "assembles DATE + CUSTOMER + FACTS + STEADY + format spec → `client.messages.create()` is called "
+        "with `system=[{'text': SYSTEM_PROMPT, 'cache_control': {'type': 'ephemeral'}}]` for prompt caching → "
+        "three retries with exponential backoff on transient failures → `validate_numeric_grounding()` runs "
+        "on the response. Pass: return LLM markdown. Fail: return `render_template_fallback()` output. The "
+        "log lines from `report_generator` (latency, in/out tokens, cache_read, cache_write) appear live in "
+        "the sidebar tail."
     )
 
     ranker = get_ranker()
@@ -818,9 +839,13 @@ def section_failures() -> None:
                 "The brief asks for the top three. Here they are, with a demonstrable defence each.")
 
     narration(
-        "Every analytics product fails in roughly the same ways. The interesting answer isn't 'we'll handle "
-        "errors' — it's identifying the specific failure shapes for THIS data and building the specific "
-        "countermeasure for each. Let me walk through the three and show the mitigation running on real data."
+        "Each tab below runs different code that demonstrates one of the three mitigations. The Sunday tab "
+        "filters `ranker.available_dates()` to dates where `pd.Timestamp(d).dayofweek == 6`, takes the last 4, "
+        "and calls `rank_day(d, top_n=20)` on each — picking out the revenue finding and reading "
+        "`f.z_score` and `f.is_alert` to show that DoW adjustment kept them near zero. The DQ tab calls "
+        "`rank_day(last_date, top_n=10)` and reads `f.is_data_quality_flag` on each Finding — true findings "
+        "appear sorted to the bottom by the 3-level tuple key. The hallucinated-causation tab is informational "
+        "(the live demo for that lives in section 5)."
     )
 
     ranker = get_ranker()
@@ -907,9 +932,13 @@ def section_scale() -> None:
                 "Where this breaks at 100 customers, 1k, 10k.")
 
     narration(
-        "The brief asks specifically about 100 and 10,000 customers. The interesting answer isn't 'it scales' — "
-        "it's identifying the specific binding constraint at each tier. Move the sliders and the calculator "
-        "shows where the cost cliff is and what each mitigation (caching, model tiering, batching) actually buys."
+        "This page makes no API calls — every number is a pure Python calculation against constants. "
+        "`INPUT_TOK = 2000`, `OUTPUT_TOK = 1500` are typical per-report token counts. Sonnet pricing "
+        "(USD 3 in / 15 out per million tokens) and Haiku pricing (USD 0.80 in / 4 out) are the published "
+        "Anthropic rates. The caching toggle reduces the effective input price by `1 − 0.8 + 0.8 × 0.1` "
+        "(80% of input is cached system prompt, billed at 10% on cache hits). The tiered-model toggle assumes "
+        "70% Haiku / 30% Sonnet split. The cost-curve chart sweeps the same formula across customer counts via "
+        "a Python list comprehension and renders log-log via Altair."
     )
 
     c1, c2 = st.columns([1, 1])
@@ -988,9 +1017,13 @@ def section_logs() -> None:
                 "Every action taken on this dashboard since you opened it.")
 
     narration(
-        "Part 9 of the design — observability. In production these would flow into Datadog or Honeycomb, "
-        "indexed by customer and date so any complaint like 'the digest said my CPC went up 333%' is "
-        "traceable end-to-end. Here you see them live in the browser."
+        "All log records on this page come from a single `StreamlitLogHandler` (a `logging.Handler` subclass) "
+        "that's attached to Python's root logger by `setup_logging()` in this file. Every `log.info(...)` call "
+        "from any module — `dashboard`, `ranker`, `report_generator`, even `httpx` — flows through that "
+        "handler and is appended to `st.session_state['logs']`. The dataframe below filters and renders that "
+        "list. Clearing fires `st.rerun()` after wiping the session-state list. Download serialises the same "
+        "list to JSON. In production this same handler interface would point at Datadog, Honeycomb, or "
+        "CloudWatch instead of session state."
     )
 
     logs = st.session_state.get("logs", [])
