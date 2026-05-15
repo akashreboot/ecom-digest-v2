@@ -484,6 +484,18 @@ def section_ranker() -> None:
         findings_dicts = [f.to_dict() for f in findings]
         st.session_state["_last_findings"] = findings_dicts
 
+        if not findings:
+            st.warning(
+                f"No findings on **{target_date}**. This usually means the date is too early in the "
+                "dataset for the rolling baselines to be populated. The ranker needs ~3 weeks of prior "
+                "history per series before z-scores become valid (28-day rolling mean with min_periods=14, "
+                "plus same-day-of-week std needs 3+ same-weekday observations). "
+                "**Try a date after roughly Sep 22 2025.**"
+            )
+            log_step(f"Ranker: {target_date} returned 0 findings — likely insufficient history",
+                     level="WARNING")
+            return
+
         st.subheader(f"Top {len(findings)} findings — {target_date}")
         df_f = findings_table(findings_dicts)
         st.dataframe(df_f, use_container_width=True, hide_index=True)
@@ -572,6 +584,14 @@ def section_personalisation() -> None:
         log_step(f"Personalisation: re-ranking {target_date} for both profiles")
         findings = [f.to_dict() for f in ranker.rank_day(target_date, top_n=15)]
 
+        if not findings:
+            st.warning(
+                f"No findings on **{target_date}** — likely too early in the dataset for rolling baselines. "
+                "Pick a later date (after roughly Sep 22 2025)."
+            )
+            log_step(f"Personalisation: {target_date} returned 0 findings", level="WARNING")
+            return
+
         growth = apply_profile_reranking(findings, PROFILE_GROWTH)
         scale  = apply_profile_reranking(findings, PROFILE_SCALE)
 
@@ -629,6 +649,10 @@ def section_personalisation() -> None:
             "Match?":         "✓ same" if same else "✗ different",
         })
     st.dataframe(pd.DataFrame(diff_rows), use_container_width=True, hide_index=True)
+
+    if not growth or not scale:
+        st.info("No findings to compare on this date.")
+        return
 
     n_different = sum(1 for r in diff_rows if r["Match?"].startswith("✗"))
     g_lead, s_lead = growth[0]["metric"], scale[0]["metric"]
