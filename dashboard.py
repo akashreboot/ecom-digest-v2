@@ -73,6 +73,13 @@ try:
 except Exception as e:
     REPORT_IMPORT_OK = False
     REPORT_IMPORT_ERR = str(e)
+    # Fallback constants so the dashboard chrome (sidebar caption, env
+    # status panel, etc.) can still render — letting the user SEE the
+    # import error in section 1 instead of crashing on a NameError.
+    MODEL          = "unavailable"
+    DAILY_TOP_N    = 5
+    WEEKLY_TOP_N   = 8
+    SYSTEM_PROMPT  = ""
 
 
 DATA_PATH = ROOT / "data" / "metrics_159d.csv"
@@ -1279,11 +1286,17 @@ def main() -> None:
     render_sidebar_log_tail()
 
     st.sidebar.markdown("---")
-    st.sidebar.caption(
-        f"Model: `{MODEL}`  ·  "
-        f"Top-N daily: {DAILY_TOP_N}  ·  "
-        f"Top-N weekly: {WEEKLY_TOP_N}"
-    )
+    if REPORT_IMPORT_OK:
+        st.sidebar.caption(
+            f"Model: `{MODEL}`  ·  "
+            f"Top-N daily: {DAILY_TOP_N}  ·  "
+            f"Top-N weekly: {WEEKLY_TOP_N}"
+        )
+    else:
+        st.sidebar.caption(
+            f"⚠️ `report_generator` import failed — see section 1 status panel. "
+            f"Details: `{(REPORT_IMPORT_ERR or 'unknown')[:80]}`"
+        )
 
 
 if __name__ == "__main__":
