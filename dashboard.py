@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -135,23 +136,55 @@ def log_step(msg: str, level: str = "INFO") -> None:
 # Cached resource builders
 # ──────────────────────────────────────────────────────────────────────────────
 
+def get_active_data_path() -> Optional[Path]:
+    """
+    Resolve the CSV the dashboard should use. Precedence:
+      1. File uploaded via section 1's file_uploader (lives in tempdir,
+         path stored in st.session_state['_data_upload_path'])
+      2. The bundled local file at data/metrics_159d.csv
+      3. None — env_status_panel will show "missing" and ranker calls
+         no-op gracefully.
+    """
+    uploaded = st.session_state.get("_data_upload_path") if hasattr(st, "session_state") else None
+    if uploaded and Path(uploaded).exists():
+        return Path(uploaded)
+    if DATA_PATH.exists():
+        return DATA_PATH
+    return None
+
+
 @st.cache_resource(show_spinner="Loading 159 days of metric data …")
-def get_ranker() -> Optional[MetricRanker]:
-    if not RANKER_IMPORT_OK or not DATA_PATH.exists():
+def _build_ranker(path_str: str) -> Optional[MetricRanker]:
+    """Cached on the path string so a fresh upload yields a fresh ranker."""
+    if not RANKER_IMPORT_OK:
         return None
-    logging.getLogger("dashboard").info("Constructing MetricRanker from %s", DATA_PATH.name)
-    return MetricRanker(DATA_PATH)
+    p = Path(path_str)
+    if not p.exists():
+        return None
+    logging.getLogger("dashboard").info("Constructing MetricRanker from %s", p.name)
+    return MetricRanker(p)
+
+
+def get_ranker() -> Optional[MetricRanker]:
+    p = get_active_data_path()
+    return _build_ranker(str(p)) if p is not None else None
 
 
 @st.cache_data(show_spinner=False)
-def get_raw_df() -> Optional[pd.DataFrame]:
-    if not DATA_PATH.exists():
+def _load_df(path_str: str) -> Optional[pd.DataFrame]:
+    p = Path(path_str)
+    if not p.exists():
         return None
-    df = pd.read_csv(DATA_PATH, parse_dates=["date"])
+    df = pd.read_csv(p, parse_dates=["date"])
     for col in ["channel", "campaign", "customer_type"]:
         df[col] = df[col].fillna("").astype(str)
     df["metric"] = df["metric"].str.lower()
     return df
+
+
+def get_raw_df() -> Optional[pd.DataFrame]:
+    p = get_active_data_path()
+    return _load_df(str(p)) if p is not None else None
 
 
 def get_report_generator() -> Optional[ReportGenerator]:
@@ -189,10 +222,14 @@ def env_status_panel() -> None:
     """Show whether the system is ready to run (data, API key, imports)."""
     c1, c2, c3 = st.columns(3)
     with c1:
-        ok = DATA_PATH.exists()
-        st.metric("Dataset",
-                  "✓ Loaded" if ok else "✗ Missing",
-                  f"data/{DATA_PATH.name}" if ok else "place CSV in data/")
+        active = get_active_data_path()
+        if active is None:
+            st.metric("Dataset", "✗ Missing", "upload below or place in data/")
+        else:
+            source = ("uploaded"
+                      if str(active) == st.session_state.get("_data_upload_path")
+                      else "bundled")
+            st.metric("Dataset", "✓ Loaded", f"{active.name} ({source})")
     with c2:
         ok = RANKER_IMPORT_OK and REPORT_IMPORT_OK
         st.metric("Code imports",
@@ -205,6 +242,70 @@ def env_status_panel() -> None:
                   "✓ Set" if ok else "✗ Missing",
                   "live LLM calls enabled"
                   if ok else "demo mode (template fallback used)")
+
+
+def render_data_uploader() -> None:
+    """
+    Section 1's runtime dataset uploader. Lets a fresh clone or a
+    Streamlit Cloud deployment receive the CSV at runtime instead of
+    requiring it on disk before launch. The bundled file in data/
+    still wins when present so local-dev workflow is unchanged.
+    """
+    active = get_active_data_path()
+    has_local_bundled = DATA_PATH.exists()
+    has_upload = bool(st.session_state.get("_data_upload_path"))
+
+    expanded_default = active is None  # only auto-expand when nothing's available
+    label = ("📁 Dataset upload (drop your CSV here for this session)"
+             if not has_upload
+             else "📁 Dataset uploaded — replace or clear below")
+
+    with st.expander(label, expanded=expanded_default):
+        st.markdown(
+            "If you're running on Streamlit Cloud, a fresh clone, or any "
+            "machine without `data/metrics_159d.csv` present, drop your CSV "
+            "here. The file is stored in a temporary directory for this "
+            "session only — it is never committed to the repo."
+        )
+
+        uploaded = st.file_uploader(
+            "metrics_159d.csv",
+            type=["csv"],
+            accept_multiple_files=False,
+            help="Long-format daily metrics CSV per the data dictionary.",
+            key="_data_uploader",
+        )
+
+        if uploaded is not None:
+            tmpdir = Path(tempfile.gettempdir()) / "ecom_digest_uploads"
+            tmpdir.mkdir(parents=True, exist_ok=True)
+            target = tmpdir / uploaded.name
+            target.write_bytes(uploaded.getvalue())
+            st.session_state["_data_upload_path"] = str(target)
+            log_step(f"Dataset uploaded: {uploaded.name} "
+                     f"({len(uploaded.getvalue()):,} bytes) → {target}")
+            st.success(
+                f"✓ Loaded `{uploaded.name}` for this session. "
+                "Move on to section 3 to score it, or section 6 to generate a report."
+            )
+
+        # Status + clear button
+        if has_upload:
+            uploaded_path = Path(st.session_state["_data_upload_path"])
+            st.caption(f"Active uploaded file: `{uploaded_path.name}` "
+                       f"at `{uploaded_path}`")
+            if st.button("Clear uploaded file", help="Falls back to data/ if present"):
+                st.session_state.pop("_data_upload_path", None)
+                # Drop the cached ranker/df keyed on the old path
+                _build_ranker.clear()
+                _load_df.clear()
+                log_step("Uploaded dataset cleared", level="WARNING")
+                st.rerun()
+        elif has_local_bundled:
+            st.caption(f"Currently using bundled file `data/{DATA_PATH.name}`. "
+                       "Upload above to override for this session.")
+        else:
+            st.warning("No dataset available yet. Upload one above to begin.")
 
 
 def findings_table(findings: list[dict]) -> pd.DataFrame:
@@ -246,6 +347,7 @@ def section_overview() -> None:
     )
 
     env_status_panel()
+    render_data_uploader()
     st.markdown(" ")
 
     c1, c2 = st.columns([3, 2])
