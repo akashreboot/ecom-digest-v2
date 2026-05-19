@@ -6,11 +6,12 @@ v2 — fixes: dedup shopify/unattributed, caps ROAS spike artifacts,
 
 import pandas as pd
 import numpy as np
+import logging
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Optional, Union
-import warnings
-warnings.filterwarnings("ignore")
+
+log = logging.getLogger(__name__)
 
 
 BUSINESS_WEIGHTS = {
@@ -64,8 +65,8 @@ class Finding:
     baseline_mean: float
     baseline_std:  float
     z_score:       float
-    wow_delta_pct: float
-    mom_delta_pct: float
+    wow_delta_pct: Optional[float]
+    mom_delta_pct: Optional[float]
     stat_score:    float
     biz_weight:    float
     final_score:   float
@@ -73,6 +74,18 @@ class Finding:
     is_alert:      bool
     is_data_quality_flag: bool
     fact_sentence: str
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict — explicit casts handle numpy scalars from pandas."""
+        d = asdict(self)
+        for k in ("value", "baseline_mean", "baseline_std", "z_score",
+                 "stat_score", "biz_weight", "final_score"):
+            d[k] = float(d[k])
+        for k in ("wow_delta_pct", "mom_delta_pct"):
+            d[k] = float(d[k]) if d[k] is not None else None
+        d["is_alert"] = bool(d["is_alert"])
+        d["is_data_quality_flag"] = bool(d["is_data_quality_flag"])
+        return d
 
 
 class MetricRanker:
@@ -106,26 +119,36 @@ class MetricRanker:
                 continue
             roll_mean = s.rolling(ROLLING_WINDOW, min_periods=14).mean()
             roll_std  = s.rolling(ROLLING_WINDOW, min_periods=14).std()
-            dow_mean  = self._dow_adjusted_mean(s)
+            dow_mean, dow_std = self._dow_adjusted_stats(s)
             series_list.append({
                 "keys":      dict(zip(group_keys, keys)),
                 "series":    s,
                 "roll_mean": roll_mean,
                 "roll_std":  roll_std,
                 "dow_mean":  dow_mean,
+                "dow_std":   dow_std,
             })
         self._series = series_list
 
-    def _dow_adjusted_mean(self, s):
+    def _dow_adjusted_stats(self, s):
+        """
+        Same-weekday baseline mean AND std so the z-score numerator and denominator
+        come from the same distribution. Using overall 28d std with a same-DoW mean
+        understates variance and inflates z on stable metrics.
+
+        Uses up to 8 prior same-weekday observations for std (need n>=3 to be stable)
+        and the last 4 for mean (recent enough to track level changes).
+        """
         dow_means = pd.Series(index=s.index, dtype=float)
+        dow_stds  = pd.Series(index=s.index, dtype=float)
         dates     = s.index.sort_values()
         for i, date in enumerate(dates):
             same_dow = [d for d in dates[:i] if d.dayofweek == date.dayofweek]
             if len(same_dow) >= 2:
                 dow_means[date] = s[same_dow[-4:]].mean()
-            else:
-                dow_means[date] = np.nan
-        return dow_means
+            if len(same_dow) >= 3:
+                dow_stds[date] = s[same_dow[-8:]].std()
+        return dow_means, dow_stds
 
     def _is_ratio_metric(self, metric):
         return metric in {"roas", "ctr", "cpc", "cpm", "aov", "new_customer_share"}
@@ -136,6 +159,7 @@ class MetricRanker:
         roll_mean = series_entry["roll_mean"]
         roll_std  = series_entry["roll_std"]
         dow_mean  = series_entry["dow_mean"]
+        dow_std   = series_entry["dow_std"]
 
         if target_date not in s.index:
             return None
@@ -147,12 +171,18 @@ class MetricRanker:
 
         value = s[target_date]
 
-        if target_date in dow_mean.index and not pd.isna(dow_mean[target_date]):
+        # Use same-DoW baseline+std when available so numerator & denominator
+        # come from the same distribution. Fall back to overall 28d stats
+        # for short series.
+        use_dow = (target_date in dow_mean.index and
+                   not pd.isna(dow_mean[target_date]) and
+                   not pd.isna(dow_std.get(target_date, np.nan)))
+        if use_dow:
             baseline = dow_mean[target_date]
+            std      = dow_std[target_date]
         else:
             baseline = roll_mean.get(target_date, np.nan)
-
-        std = roll_std.get(target_date, np.nan)
+            std      = roll_std.get(target_date, np.nan)
 
         if pd.isna(baseline) or pd.isna(std) or std == 0:
             return None
