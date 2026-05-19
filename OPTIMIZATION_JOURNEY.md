@@ -1,19 +1,20 @@
 # Optimization Journey — From v1 prototype to production architecture
 
-> A short, candid record of what I built in v1, what's structurally limited about it, and the three upgrades I'd ship next. Written so an engineering panel can see exactly how I think about evolving a prototype into production.
+> A short, candid record of the v1 design decisions, where each one stops being good enough, and the three upgrades that would replace them in a production rollout. Written to make the v1 → v2 evolution path explicit and reviewable.
 
 ---
 
-## Why this doc exists
+## Why this document exists
 
-The take-home is a v1 prototype. v1 is not the final answer — it's the deliberately scope-limited answer that hits the brief's success criteria (signal selection, grounded explanation, no hallucination, top-3 failure modes) in the time available.
+The current build is a v1 prototype. v1 is not the final architecture — it's the deliberately scope-limited answer that hits the product's success criteria (signal selection, grounded explanation, no hallucination, top-3 failure modes) with the data and time available.
 
 This doc covers three things:
-1. **The v1 decisions** — what I picked and why each was the right call for the prototype.
-2. **The honest weaknesses** — where v1 stops being good enough.
+
+1. **The v1 decisions** — what I picked and why each was the right call at this scope.
+2. **The honest weaknesses** — where v1 stops being good enough at scale.
 3. **The v2 upgrades** — three specific, named, industry-validated alternatives, with implementation sketch and trade-off analysis.
 
-A panel asking "what would you do differently?" wants to hear that you can name the next move precisely, not that you'd "do more ML."
+The goal is to make the evolution path mechanical rather than aspirational. v2 is data-bounded, not effort-bounded — the architecture is already shaped to absorb each upgrade without rewriting the rest of the system.
 
 ---
 
@@ -35,14 +36,14 @@ Ratio-metric cap at ±500%, dedup table for Shopify total vs unattributed, data-
 
 ## Why these were the right v1 choices
 
-The brief gives 160 days of one anonymised tenant's data. Within that scope, every alternative I considered is either premature optimization or impossible:
+The dataset gives 160 days of one anonymised tenant's data. Within that scope, every alternative I considered is either premature optimization or impossible:
 
 - **STL decomposition needs at least two full cycles of the longest seasonality.** For weekly seasonality that's two weeks (fine). For annual seasonality that's two years (impossible with 160 days).
 - **CausalImpact needs intervention markers and a valid control series.** The dataset has no labelled interventions and the channels in it overlap in customer base — no clean control.
 - **Learned per-customer business weights need engagement data.** No clicks, no follow-up questions tracked, no "not relevant" signal. Zero training signal.
 - **Cross-metric story grouping needs cardinality.** With ~200 series and 5–10 findings per day, grouping is useful but the gain is marginal at this scale.
 
-The v1 approach is also the **most auditable** option. A panel reviewing the prototype can trace every number in the report end-to-end through Python that runs the same way every time. Anything stochastic at the selection layer (LLM-as-judge, model-based scoring) would have made the system harder to defend.
+The v1 approach is also the **most auditable** option. Every number that appears in a final report can be traced end-to-end through Python that runs the same way every time. Anything stochastic at the selection layer (LLM-as-judge, model-based scoring) would have made the system harder to defend against "why did the digest say this?" queries.
 
 ---
 
@@ -66,7 +67,7 @@ One catastrophic day in the baseline window inflates std for the next 27 days, s
 The hedged language is the defensive workaround for not having a counterfactual. The brand owner's question — "did the budget change drive revenue?" — gets a disclaimer, not an answer.
 
 ### W6 — Findings are independent
-Five correlated findings on the same day (Meta CPM up + CPC up + CTR down + ROAS down + spend down) get five bullets. They are one story.
+Five correlated findings on the same day (Meta CPM up + CPC down + CTR down + ROAS down + spend down) get five bullets. They are one story.
 
 ---
 
@@ -87,12 +88,14 @@ For each metric series, nightly:
   # everything downstream — business weights, sort, slice, profile rerank — stays identical
 ```
 
-**Why this is the right upgrade (for W1, W3, partly W2):**
+**Why this is the right upgrade (addresses W1, W3, partly W2):**
+
 - Multiple seasonalities cleanly modelled (weekly via STL, annual + monthly + holidays via Prophet)
 - Trend changes don't poison the anomaly signal — the trend component absorbs them
 - The interface contract with the LLM doesn't change; the LLM still receives fact sentences with z-scores. Only the upstream computation is more honest.
 
 **Used in production by:**
+
 - **Netflix** — STL across the streaming-quality stack
 - **LinkedIn** — Luminol open-source library uses a similar decomposition
 - **Uber** — Prophet for capacity forecasting, custom anomaly logic on residuals
@@ -100,8 +103,9 @@ For each metric series, nightly:
 - **Booking.com** — published their bootstrap-residual variant in their engineering blog
 
 **Trade-offs:**
-- STL needs ≥2 cycles of the longest seasonality. For annual seasonality that's 2 years of history — the current 160-day dataset can't fit annual STL. This is the literal reason I didn't build it in v1.
-- ~100ms per series per fit → ~20 seconds per nightly batch for 200 series. Acceptable.
+
+- STL needs ≥2 cycles of the longest seasonality. For annual seasonality that's 2 years of history — the current 160-day dataset can't fit annual STL. This is the literal reason it isn't in v1.
+- ~100 ms per series per fit → ~20 seconds per nightly batch for 200 series. Acceptable.
 - The residual is harder to explain than "today vs baseline." A UX pass is needed so brand owners read the z-score as "X std above what the model expected" rather than "X std above last month's average."
 
 ### Upgrade 2 — CausalImpact for the attribution question
@@ -122,18 +126,21 @@ For each flagged or detected intervention (budget change, creative refresh, chan
   #    (95% CI: 7–17%, posterior P(lift>0) = 0.97)"
 ```
 
-**Why this is the right upgrade (for W5):**
+**Why this is the right upgrade (addresses W5):**
+
 - Replaces the disclaimer with a decision-grade output.
 - Posterior credible intervals + tail probabilities communicate uncertainty honestly without hiding the answer.
 - Pairs naturally with the existing system — the digest can say "your Dec 4 budget change is the biggest contributor to this week's lift, estimated +12% (95% CI 7–17%)."
 
 **Used in production by:**
+
 - **Google** — introduced the technique; used internally for ad-product measurement
 - **Walmart** — published a Walmart Global Tech blog walking through CausalImpact for incrementality
 - **Lifesight, Measured, Recast** — all major incrementality / measurement vendors use BSTS variants
 - **Meta** — uses related state-space models in Robyn (their open-source marketing-mix modelling library)
 
 **Trade-offs:**
+
 - Requires clean intervention markers, or a changepoint-detection step that finds them automatically (PELT, BOCPD)
 - Requires a valid control series that wasn't affected by the intervention — non-trivial in adtech because brand effects spill across channels
 - ~5 seconds per fit vs milliseconds for z-score
@@ -158,34 +165,36 @@ After top-N + profile rerank:
   # the digest prompt receives stories at the top level, with member facts as supporting context
 ```
 
-**Why this is the right upgrade (for W6):**
+**Why this is the right upgrade (addresses W6):**
+
 - Reduces cognitive load. "Auction pressure today — CPM +18%, CPC +14%, CTR -8%, ROAS -22%" is one bullet, not four.
 - The most expensive cognitive work — connecting dots — moves from the reader to the system.
 - Naturally amplifies the signal-to-noise win the top-N cap already provides.
 
 **Used in production by:**
+
 - **Anodot** — "stories" are the core product differentiator
 - **Outlier.ai** (acquired by Salesforce) — built explicitly around correlated-anomaly grouping
-- **OutOfTheBlue** — the "8 Infrastructure Errors" event card in their screenshots is exactly this pattern applied to infrastructure signals
 - **DataDog Watchdog** — automated correlated-alert grouping in incident view
 - **Splunk ITSI** — event correlation engine uses similar clustering
 
 **Trade-offs:**
+
 - Similarity metric needs care — same source + same campaign + matched direction is a fine first cut, but feature-level cosine similarity is more robust
 - Risk of over-grouping: distinct stories that share a source get collapsed if the threshold is too loose. Per-cluster cardinality cap (e.g. max 4 metrics per story) mitigates this.
 - Adds a small LLM step to synthesize the story headline. Modest prompt work, not architectural redesign. Falls back cleanly to a rule-based template ("auction pressure" / "creative fatigue" / "platform outage") when the LLM is unavailable.
 
 ---
 
-## My research journey to these specific upgrades
+## Research path to these specific upgrades
 
-Not "I imagined what'd be good." Specific reading and reasoning that led to each pick.
+Not speculative — each one comes from a specific reading thread.
 
-**For Upgrade 1 (STL / Prophet):** I started from the Booking.com engineering post on time-series anomaly detection ([medium.com](https://medium.com/booking-com-development/anomaly-detection-in-time-series-using-statistical-analysis-cc587b21d008)) which uses bootstrapped residuals. That sent me to STL (Cleveland et al. 1990, still the canonical decomposition) and then to Prophet (Taylor & Letham 2017, Facebook's open-source extension that handles holidays natively). Reading Netflix's "Anomaly Detection in the Streaming World" and LinkedIn's Luminol README confirmed STL is the standard upgrade path from rolling z-score in production analytics platforms.
+**For Upgrade 1 (STL / Prophet):** the Booking.com engineering post on time-series anomaly detection ([medium.com](https://medium.com/booking-com-development/anomaly-detection-in-time-series-using-statistical-analysis-cc587b21d008)) which uses bootstrapped residuals on a similar baseline. That led to STL (Cleveland et al. 1990, still the canonical decomposition) and Prophet (Taylor & Letham 2017, Facebook's open-source extension that handles holidays natively). Netflix's "Anomaly Detection in the Streaming World" and LinkedIn's Luminol README confirm STL is the standard upgrade path from rolling z-score in production analytics platforms.
 
-**For Upgrade 2 (CausalImpact):** the r=0.12 finding in my own EDA was the catalyst — that's the number that forced the hedging rule, and I wanted to know what the proper answer is when "hedge it" isn't enough. That sent me to Brodersen et al. 2015 (the original Google Research paper) and to Walmart's published case study on using BSTS for incrementality measurement. Reading those made it clear that the "ad spend → revenue" attribution question is **already solved at the methodology level** — the gap in my prototype is data (no intervention markers, no clean control), not method.
+**For Upgrade 2 (CausalImpact):** the r=0.12 EDA finding was the catalyst — that's the number that forced the hedging rule, and "hedge it" isn't a complete answer. The reading thread: Brodersen et al. 2015 (the original Google Research paper) and Walmart's published case study on using BSTS for incrementality measurement. The conclusion: the "ad spend → revenue" attribution question is **already solved at the methodology level** — the gap in v1 is data (no intervention markers, no clean control), not method.
 
-**For Upgrade 3 (cross-metric story grouping):** I noticed in the generated reports that a typical day produces 3–5 findings from the same campaign with the same direction signature. That pattern is what Anodot's product literature calls a "story" and what OutOfTheBlue calls an "incident" or "event summary" — visible in the screenshots I was given. Studying their product UX confirmed this is a known solved pattern, not invention.
+**For Upgrade 3 (cross-metric story grouping):** a typical day in the generated reports produces 3–5 findings from the same campaign with the same direction signature. That pattern is what Anodot's product literature calls a "story" and what DataDog Watchdog calls correlated alerts. Studying their product UX confirms this is a solved pattern, not invention.
 
 ---
 
@@ -199,11 +208,10 @@ Not "I imagined what'd be good." Specific reading and reasoning that led to each
 | **LinkedIn** | Luminol (STL-based) | Causal inference toolkit | Correlation engine |
 | **DataDog Watchdog** | Proprietary STL-like | None | Automated correlated alerts |
 | **Anodot** | Multiple per-metric models | None | "Stories" — their core feature |
-| **OutOfTheBlue** | Real-time monitoring | Root-cause LLM layer | Event grouping (visible in their UI) |
 | **Google** | Mixed | CausalImpact (BSTS) | Internal |
 | **Walmart** | Mixed | BSTS for incrementality | Internal |
-| **My v1** | Rolling z + DoW adjustment | Hedged language (r=0.12) | Dedup pairs only |
-| **My v2 target** | STL / Prophet | CausalImpact | Correlation clustering |
+| **v1** | Rolling z + DoW adjustment | Hedged language (r=0.12) | Dedup pairs only |
+| **v2 target** | STL / Prophet | CausalImpact | Correlation clustering |
 
 The v2 target aligns with what serious production stacks do. It's not aspirational — it's the standard.
 
@@ -223,27 +231,13 @@ The upgrades change **how the z-score is computed** and **what additional findin
 
 ---
 
-## Honest answer to "why didn't you build v2 already?"
+## Why v2 isn't built yet — four honest reasons
 
-Four reasons, ranked by honesty:
+Ranked by honesty:
 
-1. **Data didn't support it.** STL needs 2+ cycles of the longest seasonality. Prophet wants 2+ years for holiday detection. CausalImpact needs labelled interventions and a clean control. v1's dataset has none of these.
-2. **No engagement signal yet.** Half the personalisation roadmap depends on click data the take-home dataset doesn't include. Building learned weights against zero engagement data is fitting noise.
-3. **Take-home time budget.** 6–10 hours, per the brief. Three days of clean implementation buys v1 done well. Three weeks of clean implementation buys v2 done well. The brief explicitly said "don't over-engineer."
-4. **v1 is the right scope for the panel evaluation.** A take-home is graded on the rigor of the chosen approach plus the candor of the trade-off discussion. Building v2 partially would have weakened the v1 story without producing a defensible v2.
+1. **The dataset doesn't support it.** STL needs 2+ cycles of the longest seasonality. Prophet wants 2+ years for holiday detection. CausalImpact needs labelled interventions and a clean control. v1's dataset has none of these.
+2. **No engagement signal yet.** Half the personalisation roadmap depends on click data the source dataset doesn't include. Building learned weights against zero engagement data is fitting noise.
+3. **Prototype scope.** The prototype-stage time budget buys v1 done well. Three weeks of clean implementation would buy v2 done well. v1 done well + v2 documented is more valuable than v2 half-built.
+4. **v1 is the right scope for the current evaluation.** v1's job is to prove the analytical core works. v2's job is to prove the production rollout works. Different evidence required.
 
-The grown-up answer is: v1 is correct for the prototype; v2 is correct for the production rollout; I can speak to both because I built one and read the literature for the other.
-
----
-
-## Closing — what this document tells the panel
-
-If you read only this doc, you know:
-
-- I made the v1 choices deliberately, not by default.
-- I can name the specific weaknesses of each v1 choice.
-- I have a specific named replacement for each weakness, with implementation sketch, industry validation, and trade-off analysis.
-- I know which companies use which methods in production.
-- I can articulate the *boundary of generalisation* — what changes in v2 vs what stays the same.
-
-That last item — knowing what's load-bearing and what's not — is the senior signal.
+The grown-up framing: v1 is correct for the current scope; v2 is correct for the production rollout; both are real and the path from one to the other is mechanical.
