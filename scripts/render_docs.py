@@ -24,11 +24,9 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # Source docs and their human-friendly titles for the footer
 DOCS = [
-    ("INTERVIEW_PREP.md",      "Interview Prep — Complete Study Guide"),
-    ("PRESENTATION.md",        "Presentation Pack — Answers + Script"),
-    ("OPTIMIZATION_JOURNEY.md", "Optimization Journey — v1 to v2 Evolution"),
-    ("design_doc.md",          "Product & System Design"),
-    ("tradeoffs.md",           "Trade-offs & What's Next"),
+    ("design_doc.md",          "Ecom Digest — Product & System Design"),
+    ("tradeoffs.md",           "Ecom Digest — Trade-offs & What's Next"),
+    ("OPTIMIZATION_JOURNEY.md", "Ecom Digest — Optimization Journey (v1 → v2)"),
 ]
 
 
